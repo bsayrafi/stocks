@@ -14,8 +14,18 @@ warnings.filterwarnings('ignore')
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 WORK_DIR = None
+SPKL_PATH= None
+MPKL_PATH= None
+LPKL_PATH= None
+DPKL_PATH= None
+
+
 def set_work_dir(work_dir_path):
     global WORK_DIR
+    global SPKL_PATH
+    global MPKL_PATH
+    global LPKL_PATH
+    global DPKL_PATH
     WORK_DIR = work_dir_path
     SPKL_PATH = WORK_DIR + "/data/smarket_data.pkl"
     MPKL_PATH = WORK_DIR + "/data/mmarket_data.pkl"
