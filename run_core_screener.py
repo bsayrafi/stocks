@@ -133,7 +133,7 @@ if not market_bullish:
 #results2 = screener.evaluate_tickers(filteredTickers, data, extra_data_store=extra_data_store)
 results2 = screener.evaluate_tickers_parallel(
     filteredTickers, data,
-    max_workers=10,
+    max_workers=5,
     extra_data_store=extra_data_store,
 )
 
