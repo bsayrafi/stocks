@@ -34,12 +34,10 @@ fileapp = {
 }.get(num, "Debug")
 
 enrichment_tickers = [
-    "ADI", "AIR", "AMAT", "AMD", "APH", "APPF", "ATRO", "AYI", "BE", "CART",
-    "CAT", "CSCO", "DDOG", "ENTG", "EOG", "ESTC", "EXLS", "EXPE", "FIVN", "FIX",
-    "FLYW", "FRSH", "GD", "GLW", "GOOGL", "INGM", "KEYS", "KGS", "KLAC", "LRCX",
-    "MDB", "MGY", "MRVL", "MSFT", "MU", "NTNX", "NVDA", "ONTO", "P", "PCAR",
-    "PLTR", "QTWO", "SNDK", "STX", "TER", "TOST", "TTC", "TWLO", "URBN", "WDAY",
-    "WDC", "WHD", "WK"
+    "EXLS", "EOG", "MU", "MSFT", "OXY", "VSH", "AMAT", "ESTC", "FRSH", "KEYS",
+    "LRCX", "MGY", "NTNX", "NVDA", "ONTO", "TXN", "WDC", "WHD", "FORM", "P",
+    "SNDK", "TER", "ADI", "APH", "COHR", "CSCO", "ENTG", "KGS", "STX", "TOST",
+    "WDAY", "AMD", "TWLO", "DDOG", "FLYW", "MDB", "MRVL", "WK", "PLTR"
 ]
 
 if not enrichment_tickers:
