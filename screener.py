@@ -19,13 +19,13 @@ yf_session = Session()
 
 # 2. Configure the retry rules
 retry = Retry(
-    total=2,              # Try up to 2 times
+    total=1,              # Try up to 2 times
     backoff_factor=1,     # Wait 1s, then 2s
     status_forcelist=[429, 500, 502, 503, 504] # 429 is the rate limit error
 )
 
 # 3. Create ONE adapter that handles both the pool size AND the retries
-adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry)
+adapter = HTTPAdapter(pool_connections=5, pool_maxsize=5, max_retries=retry)
 
 # 4. Mount it to the session
 yf_session.mount('https://', adapter)
