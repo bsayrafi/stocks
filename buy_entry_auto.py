@@ -12,9 +12,6 @@ if WORK_DIR not in sys.path:
 # Import local modules (Ensure these files are uploaded to your GitHub repo!)
 import constants
 import indicators
-import external_data
-import data_loader
-import screener
 import tickers
 import excel_writer
 import finvizfinance.screener.overview 
