@@ -10,6 +10,20 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
+from requests import Session
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Create a session with retry logic
+session = Session()
+retry = Retry(
+    total=5,              # Try up to 5 times
+    backoff_factor=1,     # Wait 1s, then 2s, 4s, 8s, 16s between tries
+    status_forcelist=[429, 500, 502, 503, 504] # 429 is the rate limit error
+)
+session.mount('https://', HTTPAdapter(max_retries=retry))
+# Now, any time you create a Ticker in your code, pass the session:
+# yf_ticker = yf.Ticker(symbol, session=session)
 
 def get_premarket_price(ticker: str) -> float | str:
     """Fetches the absolute latest trade price using Alpaca's free IEX feed."""
@@ -193,7 +207,7 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
 
             ])
             
-            yf_ticker = yf.Ticker(symbol) if needs_yf_ticker else None
+            yf_ticker = yf.Ticker(symbol,session=session) if needs_yf_ticker else None
 
             company_block = {}
             if CONFIG["ENABLE_COMPANY_INFO"] == 1:
