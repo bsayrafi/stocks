@@ -119,7 +119,7 @@ filteredTickers, data = loadData(num, force_redownload)
 extra_data_store = {}
 
 # 1. Check the macro regime first
-market_bullish = is_market_in_uptrend("SPY", 200)
+market_bullish = screener.is_market_in_uptrend("SPY", 200)
 
 # 2. Halt or warn based on the regime
 if not market_bullish:
