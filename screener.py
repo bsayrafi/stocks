@@ -14,22 +14,29 @@ from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
 # 1. Create the session
 yf_session = Session()
 
-# 2. Configure the retry rules
+# --- THE STEALTH FIX: Mimic a real web browser ---
+yf_session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Encoding": "gzip, deflate",
+    "Connection": "keep-alive"
+})
+
+# 2. Configure the retry rules (Notice I added 403 to the blocklist!)
 retry = Retry(
-    total=1,              # Try up to 2 times
-    backoff_factor=1,     # Wait 1s, then 2s
-    status_forcelist=[429, 500, 502, 503, 504] # 429 is the rate limit error
+    total=3,              
+    backoff_factor=2,     # Give Yahoo a slightly longer breather if it fails
+    status_forcelist=[403, 429, 500, 502, 503, 504] 
 )
 
-# 3. Create ONE adapter that handles both the pool size AND the retries
-adapter = HTTPAdapter(pool_connections=5, pool_maxsize=5, max_retries=retry)
-
-# 4. Mount it to the session
+adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry)
 yf_session.mount('https://', adapter)
 yf_session.mount('http://', adapter)
+
 
 
 def get_premarket_price(ticker: str) -> float | str:
@@ -480,6 +487,7 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
     results = []
 
     def process_one(symbol):
+        time.sleep(random.uniform(0.2, 1.2))
         return evaluate_tickers([symbol], data, verbose_errors=False, 
             finbert_pipeline=None, extra_data_store=None,tv_exchange_map=None, **kwargs)
 
