@@ -32,7 +32,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         # IMPORTANT: Make sure this matches the exact name of your main script file
         
-        run: 
+        run: |
           mkdir -p reports
           mkdir -p data
           python buy_entry_auto.py
@@ -42,5 +42,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Screener-Results
-          path: '*.xlsx'
+          path: |
+            '*.xlsx'
+            reports/*.html
           retention-days: 7
