@@ -101,7 +101,7 @@ def loadData(num, force_redownload=False):
 
 
           '200-Day Simple Moving Average': 'Price above SMA200',
-          'Price': 'Under $20',
+          #'Price': 'Under $20',
           #'RSI (14)': 'Not Overbought (<60)',
     }
   print(my_filters)
