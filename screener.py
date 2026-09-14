@@ -8,7 +8,7 @@ from external_data import *
 from strategy import *
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 
 def get_premarket_price(ticker: str) -> float | str:
