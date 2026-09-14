@@ -43,6 +43,6 @@ jobs:
         with:
           name: Screener-Results
           path: |
-            '*.xlsx'
+            data/*.xlsx
             reports/*.html
           retention-days: 7
