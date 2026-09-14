@@ -101,7 +101,7 @@ def loadData(num, force_redownload=False):
 
 
           '200-Day Simple Moving Average': 'Price above SMA200',
-          #'Price': 'Under $40',
+          'Price': 'Under $20',
           #'RSI (14)': 'Not Overbought (<60)',
     }
   print(my_filters)
@@ -146,7 +146,7 @@ if not results_df2.empty:
 
     # 1. Sector Valuation
     if constants.CONFIG["ENABLE_COMPANY_INFO"] == 1 and constants.CONFIG["ENABLE_VALUATION"] == 1:
-        results_df2, sector_medians = sector_valuation.add_sector_relative_valuation(results_df2)
+        results_df2, sector_medians = add_sector_relative_valuation(results_df2)
         print("\nSector median valuations (this batch):")
         print(sector_medians)
 
