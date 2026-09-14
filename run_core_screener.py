@@ -22,6 +22,8 @@ import screener
 import data_loader
 import external_data
 import requests
+from sector_valuation import *
+from strategy import *
 import screener #type:ignore
 from requests.adapters import HTTPAdapter
 from buy_entry import *
@@ -144,7 +146,7 @@ if not results_df2.empty:
 
     # 1. Sector Valuation
     if constants.CONFIG["ENABLE_COMPANY_INFO"] == 1 and constants.CONFIG["ENABLE_VALUATION"] == 1:
-        results_df2, sector_medians = add_sector_relative_valuation(results_df2)
+        results_df2, sector_medians = sector_valuation.add_sector_relative_valuation(results_df2)
         print("\nSector median valuations (this batch):")
         print(sector_medians)
 
