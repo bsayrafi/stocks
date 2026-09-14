@@ -13,12 +13,12 @@ from zoneinfo import ZoneInfo
 warnings.filterwarnings('ignore')
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
-WORK_DIR = None
-SPKL_PATH= None
-MPKL_PATH= None
-LPKL_PATH= None
-DPKL_PATH= None
 
+WORK_DIR = os.getcwd()
+SPKL_PATH = WORK_DIR + "/data/smarket_data.pkl"
+MPKL_PATH = WORK_DIR + "/data/mmarket_data.pkl"
+LPKL_PATH = WORK_DIR + "/data/lmarket_data.pkl"
+DPKL_PATH = WORK_DIR + "/data/dmarket_data.pkl"
 
 def set_work_dir(work_dir_path):
     global WORK_DIR
@@ -68,7 +68,7 @@ DAY_ORDER = sorted(DAY_IDXS)  # ascending index = oldest -> most recent
 CONFIG = {
 
     "MARKET_SIZE": 0,   # market size 0 small, 1 medium, 2 large
-    "PKL_PATH = ": "/content/drive/MyDrive/stock_screener/dmarket_data.pkl",
+    "PKL_PATH = ": DPKL_PATH,
 
     "SHOW_PREMARKET_PRICE": 0,   # just adds the Pre-Market column
     "FILTER_PREMARKET_GAP_UP": 0,  # actually excludes non-gapping tickers
