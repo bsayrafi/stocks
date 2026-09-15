@@ -37,7 +37,7 @@ enrichment_tickers = [
    "ADI", "AMAT", "AMD", "APH", "CSCO", "CTSH", "DDOG", "ENTG", "ESTC", "EXLS",
     "FLYW", "FORM", "FRSH", "GLW", "INGM", "KEYS", "LRCX", "MDB", "MRVL", "MSFT",
     "MU", "NTAP", "NTNX", "NVDA", "ONTO", "P", "PLTR", "SMTC", "SNDK", "STX",
-    "TER", "TOST", "TWLO", "TXN", "VSH", "WDAY", "WDC", "WK"
+    "TER", "TOST", "TWLO", "TXN", "VSH", "WDAY", "WDC", "WK", "ANET",
 ]
 
 if not enrichment_tickers:

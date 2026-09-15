@@ -5,7 +5,6 @@ import numpy as np
 import yfinance as yf
 import warnings
 import logging
-import scipy.signal as signal
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
