@@ -151,6 +151,11 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
             take_profit_target = round(current_price + (1.5 * risk_per_share), 2)
 
             vol_block = {f"D{DAY_LABELS[i]}Vol ": f"{days[i]['Volume']:.0f} " for i in DAY_ORDER}
+            # 2. Calculate the average volume across the selected days
+            avg_vol = sum(days[i]['Volume'] for i in DAY_ORDER) / len(DAY_ORDER)
+
+            # 3. Add the average to the dictionary
+            vol_block["DAvgVol "] = f"{avg_vol:.0f} "
 
             risingVol = (days[DAYm1_IDX]['Volume'] > days[DAYm2_IDX]['Volume']) and (days[DAYm2_IDX]['Volume'] > days[DAYm3_IDX]['Volume'])
             pre_price_str = "N/A"
@@ -171,7 +176,7 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
             )
 
             gflags = {i: (1 if days[i]['Close'] > days[i]['Open'] else 0) for i in DAY_IDXS}
-            cflags = {i: is_nice_green_candle(days[i]) for i in DAY_IDXS}
+            #cflags = {i: is_nice_green_candle(days[i]) for i in DAY_IDXS}
 
             rsig = 1 if (days[DAYm3_IDX]['RSI'] < days[DAYm2_IDX]['RSI'] and days[DAYm2_IDX]['RSI'] < days[DAYm1_IDX]['RSI']) else 0
 
@@ -206,7 +211,7 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                 oc_block[f"D{label}Close "] = f"{days[i]['Close']:.2f} "
 
             g_block = {f"G{DAY_LABELS[i]} ": f"{gflags[i]:.0f} " for i in DAY_ORDER}
-            c_block = {f"C{DAY_LABELS[i]}": cflags[i] for i in DAY_ORDER}
+            #c_block = {f"C{DAY_LABELS[i]}": cflags[i] for i in DAY_ORDER}
             rsi_block = {f"RSI{DAY_LABELS[i]} ": f"{round(float(days[i]['RSI']), 1)} " for i in DAY_ORDER}
 
             # --- Shared Ticker object for all yfinance-based extras below ---
@@ -432,7 +437,6 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                     **sr_block,
                     **vol_block,
                     **g_block,
-                    **c_block,
                     "AboveSMA ": f"{aboveSMA:.0f} ",
                     "52WLow ": f"{week52_low:.2f} ",
                     "52WHigh ": f"{week52_high:.2f} ",

@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Large_Signal Report Sep_15th_13_43</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e6e6;
+    --muted: #9aa4b2;
+    --accent: #9cdcfe;
+    --pass: #2ecc71;
+    --fail: #e74c3c;
+    --buy: #2ecc71;
+    --wait: #556070;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0; padding: 32px;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 20px; color: var(--accent); margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 24px; margin-bottom: 24px;
+  }
+  .card-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .card-header h2 { margin: 0; font-size: 18px; }
+  .price { color: var(--muted); font-size: 15px; }
+  .signal-badge {
+    margin-left: auto; padding: 6px 14px; border-radius: 999px; font-weight: 700;
+    font-size: 13px; letter-spacing: 0.04em;
+  }
+  .signal-badge.buy { background: rgba(46,204,113,0.15); color: var(--buy); border: 1px solid var(--buy); }
+  .signal-badge.wait { background: rgba(85,96,112,0.25); color: var(--muted); border: 1px solid var(--border); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
+  .tf-table { margin-bottom: 20px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  h3 { font-size: 13px; color: var(--accent); margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .detail-table td:first-child { color: var(--text); }
+  .fundamentals-table { margin-bottom: 18px; }
+  .fundamentals-table td:first-child { color: var(--muted); width: 45%; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px;
+    font-weight: 700; letter-spacing: 0.03em;
+  }
+  .badge.pass { background: rgba(46,204,113,0.15); color: var(--pass); }
+  .badge.fail { background: rgba(231,76,60,0.15); color: var(--fail); }
+</style>
+</head>
+<body>
+<h1>Large_Signal Report Sep_15th_13_43</h1>
+<div class="subtitle">Multi-Timeframe Buy Signal Screener</div>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>QNST</h2>
+        <div class="price">$18.47</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>18.47</td>
+          <td>17.81</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>22.32</td>
+          <td>15.14</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>17.54</td>
+          <td>19.9</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>18.47</td>
+          <td>18.69</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>39.12</td>
+          <td>35.05</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>17.54</td>
+          <td>19.9</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>18.47</td>
+          <td>18.44</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>42.49</td>
+          <td>50.56</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>bullish_engulfing</td>
+          <td>17.72</td>
+          <td>19.07</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 3/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>18.31 - 19.07 (range 0.76)</td></tr>
+            <tr><td>1h entry support</td><td>17.72</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>17.32 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>20.19</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-05 (+51d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (2)</td><td>Is QuinStreet’s Buybacks And Broker Upgrades Altering The Investment Case For QNST?<br>QuinStreet (QNST) Completes Buyback, Is The Stock Still Below Fair Value?</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>QuinStreet, Inc.</td></tr><tr><td>Sector</td><td>Communication Services</td></tr><tr><td>Industry</td><td>Advertising Agencies</td></tr><tr><td>Market Cap</td><td>$1.05B</td></tr><tr><td>Trailing P/E</td><td>13.20</td></tr><tr><td>Forward P/E</td><td>9.88</td></tr><tr><td>PEG Ratio</td><td>1.13</td></tr><tr><td>Price/Book</td><td>3.23</td></tr><tr><td>Price/Sales (TTM)</td><td>0.82</td></tr><tr><td>EPS (TTM)</td><td>1.40</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>6.28%</td></tr><tr><td>Operating Margin</td><td>5.11%</td></tr><tr><td>Return on Equity</td><td>28.65%</td></tr><tr><td>Revenue Growth (YoY)</td><td>42.70%</td></tr><tr><td>Free Cash Flow</td><td>$0.13B</td></tr><tr><td>Debt/Equity</td><td>24.04</td></tr><tr><td>Current Ratio</td><td>1.22</td></tr><tr><td>Institutional Ownership</td><td>94.47%</td></tr><tr><td>Short % of Float</td><td>12.26%</td></tr><tr><td>Beta</td><td>0.70</td></tr><tr><td>52-Week High</td><td>22.29</td></tr><tr><td>52-Week Low</td><td>10.29</td></tr><tr><td>Analyst Target (Mean)</td><td>22.40</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>Strong Buy</td></tr>
+        <tr><td>Mean Score</td><td>1.17</td></tr>
+        <tr><td># Analyst Opinions</td><td>5</td></tr>
+        <tr><td>Strong Buy</td><td>1</td></tr><tr><td>Buy</td><td>5</td></tr><tr><td>Hold</td><td>0</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.39</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.34</td></tr>
+        <tr><td># Analysts (EPS)</td><td>5</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>PGY</h2>
+        <div class="price">$21.48</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>21.48</td>
+          <td>19.98</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>16.28</td>
+          <td>23.9</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>bullish_engulfing</td>
+          <td>19.73</td>
+          <td>23.45</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>21.48</td>
+          <td>21.12</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>33.41</td>
+          <td>18.21</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>19.73</td>
+          <td>23.45</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>21.48</td>
+          <td>21.3</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>87.56</td>
+          <td>89.23</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>-</td>
+          <td>19.73</td>
+          <td>21.74</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (bullish_engulfing)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 1/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>19.73 - 21.74 (range 2.01)</td></tr>
+            <tr><td>1h entry support</td><td>19.73</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>19.11 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>25.04</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-10 (+56d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>2026-08-18 Jefferies: main -&gt; Buy</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Pagaya Technologies Ltd.</td></tr><tr><td>Sector</td><td>Technology</td></tr><tr><td>Industry</td><td>Software - Infrastructure</td></tr><tr><td>Market Cap</td><td>$1.79B</td></tr><tr><td>Trailing P/E</td><td>15.24</td></tr><tr><td>Forward P/E</td><td>5.18</td></tr><tr><td>PEG Ratio</td><td>0.03</td></tr><tr><td>Price/Book</td><td>3.01</td></tr><tr><td>Price/Sales (TTM)</td><td>1.29</td></tr><tr><td>EPS (TTM)</td><td>1.41</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>9.12%</td></tr><tr><td>Operating Margin</td><td>27.33%</td></tr><tr><td>Return on Equity</td><td>19.46%</td></tr><tr><td>Revenue Growth (YoY)</td><td>18.60%</td></tr><tr><td>Free Cash Flow</td><td>$0.21B</td></tr><tr><td>Debt/Equity</td><td>133.65</td></tr><tr><td>Current Ratio</td><td>14.58</td></tr><tr><td>Institutional Ownership</td><td>47.48%</td></tr><tr><td>Short % of Float</td><td>14.75%</td></tr><tr><td>Beta</td><td>5.37</td></tr><tr><td>52-Week High</td><td>44.99</td></tr><tr><td>52-Week Low</td><td>10.40</td></tr><tr><td>Analyst Target (Mean)</td><td>28.91</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>Strong Buy</td></tr>
+        <tr><td>Mean Score</td><td>1.18</td></tr>
+        <tr><td># Analyst Opinions</td><td>11</td></tr>
+        <tr><td>Strong Buy</td><td>2</td></tr><tr><td>Buy</td><td>9</td></tr><tr><td>Hold</td><td>0</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>1.00</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.96</td></tr>
+        <tr><td># Analysts (EPS)</td><td>10</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>III</h2>
+        <div class="price">$5.39</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>5.39</td>
+          <td>4.77</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>79.43</td>
+          <td>69.56</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>4.98</td>
+          <td>5.42</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>5.39</td>
+          <td>4.99</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>94.08</td>
+          <td>86.89</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>-</td>
+          <td>4.98</td>
+          <td>5.42</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>5.39</td>
+          <td>5.17</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>93.38</td>
+          <td>95.75</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>-</td>
+          <td>5.03</td>
+          <td>5.42</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 1/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>5.2 - 5.42 (range 0.22)</td></tr>
+            <tr><td>1h entry support</td><td>5.03</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>4.95 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>6.05</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-02 (+48d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Information Services Group, Inc.</td></tr><tr><td>Sector</td><td>Technology</td></tr><tr><td>Industry</td><td>Information Technology Services</td></tr><tr><td>Market Cap</td><td>$0.26B</td></tr><tr><td>Trailing P/E</td><td>22.42</td></tr><tr><td>Forward P/E</td><td>12.23</td></tr><tr><td>PEG Ratio</td><td>0.76</td></tr><tr><td>Price/Book</td><td>2.72</td></tr><tr><td>Price/Sales (TTM)</td><td>1.04</td></tr><tr><td>EPS (TTM)</td><td>0.24</td></tr><tr><td>Dividend Yield</td><td>334.00%</td></tr><tr><td>Profit Margin</td><td>4.67%</td></tr><tr><td>Operating Margin</td><td>8.94%</td></tr><tr><td>Return on Equity</td><td>12.30%</td></tr><tr><td>Revenue Growth (YoY)</td><td>6.40%</td></tr><tr><td>Free Cash Flow</td><td>$0.01B</td></tr><tr><td>Debt/Equity</td><td>70.44</td></tr><tr><td>Current Ratio</td><td>2.81</td></tr><tr><td>Institutional Ownership</td><td>69.80%</td></tr><tr><td>Short % of Float</td><td>2.03%</td></tr><tr><td>Beta</td><td>1.12</td></tr><tr><td>52-Week High</td><td>6.45</td></tr><tr><td>52-Week Low</td><td>3.74</td></tr><tr><td>Analyst Target (Mean)</td><td>6.80</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>None</td></tr>
+        <tr><td>Mean Score</td><td>N/A</td></tr>
+        <tr><td># Analyst Opinions</td><td>4</td></tr>
+        <tr><td>Strong Buy</td><td>1</td></tr><tr><td>Buy</td><td>1</td></tr><tr><td>Hold</td><td>0</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.10</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.10</td></tr>
+        <tr><td># Analysts (EPS)</td><td>4</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>HVT</h2>
+        <div class="price">$27.88</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>27.88</td>
+          <td>26.82</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>49.35</td>
+          <td>46.3</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>26.59</td>
+          <td>28.63</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>27.88</td>
+          <td>27.49</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>46.95</td>
+          <td>42.68</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>26.59</td>
+          <td>28.63</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>27.88</td>
+          <td>27.64</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>90.04</td>
+          <td>89.29</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>-</td>
+          <td>26.99</td>
+          <td>27.96</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 1/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>27.3 - 27.96 (range 0.66)</td></tr>
+            <tr><td>1h entry support</td><td>26.99</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>26.61 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>29.78</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-10-28 (+43d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Haverty Furniture Companies, Inc.</td></tr><tr><td>Sector</td><td>Consumer Cyclical</td></tr><tr><td>Industry</td><td>Home Improvement Retail</td></tr><tr><td>Market Cap</td><td>$0.43B</td></tr><tr><td>Trailing P/E</td><td>20.17</td></tr><tr><td>Forward P/E</td><td>10.56</td></tr><tr><td>PEG Ratio</td><td>0.76</td></tr><tr><td>Price/Book</td><td>1.48</td></tr><tr><td>Price/Sales (TTM)</td><td>0.56</td></tr><tr><td>EPS (TTM)</td><td>1.38</td></tr><tr><td>Dividend Yield</td><td>478.00%</td></tr><tr><td>Profit Margin</td><td>2.93%</td></tr><tr><td>Operating Margin</td><td>3.37%</td></tr><tr><td>Return on Equity</td><td>7.62%</td></tr><tr><td>Revenue Growth (YoY)</td><td>7.70%</td></tr><tr><td>Free Cash Flow</td><td>$0.04B</td></tr><tr><td>Debt/Equity</td><td>78.45</td></tr><tr><td>Current Ratio</td><td>1.69</td></tr><tr><td>Institutional Ownership</td><td>88.92%</td></tr><tr><td>Short % of Float</td><td>0.06%</td></tr><tr><td>Beta</td><td>1.19</td></tr><tr><td>52-Week High</td><td>29.83</td></tr><tr><td>52-Week Low</td><td>19.89</td></tr><tr><td>Analyst Target (Mean)</td><td>33.00</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>Strong Buy</td></tr>
+        <tr><td>Mean Score</td><td>0.00</td></tr>
+        <tr><td># Analyst Opinions</td><td>2</td></tr>
+        <tr><td>Strong Buy</td><td>0</td></tr><tr><td>Buy</td><td>0</td></tr><tr><td>Hold</td><td>0</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.42</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.42</td></tr>
+        <tr><td># Analysts (EPS)</td><td>2</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>INVX</h2>
+        <div class="price">$29.06</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>29.06</td>
+          <td>28.81</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>47.09</td>
+          <td>50.82</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>28.66</td>
+          <td>31.56</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>29.06</td>
+          <td>29.51</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>21.97</td>
+          <td>26.67</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>bullish_harami</td>
+          <td>28.66</td>
+          <td>31.56</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>29.06</td>
+          <td>29.69</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>19.22</td>
+          <td>16.43</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>28.66</td>
+          <td>30.29</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (bullish_harami)</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 2/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>28.66 - 29.83 (range 1.17)</td></tr>
+            <tr><td>1h entry support</td><td>28.66</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>28.04 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>30.59</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-03 (+49d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>2026-08-26 Citigroup: main -&gt; Buy</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Innovex International, Inc.</td></tr><tr><td>Sector</td><td>Energy</td></tr><tr><td>Industry</td><td>Oil &amp; Gas Equipment &amp; Services</td></tr><tr><td>Market Cap</td><td>$2.03B</td></tr><tr><td>Trailing P/E</td><td>32.67</td></tr><tr><td>Forward P/E</td><td>15.54</td></tr><tr><td>PEG Ratio</td><td>N/A</td></tr><tr><td>Price/Book</td><td>1.89</td></tr><tr><td>Price/Sales (TTM)</td><td>2.04</td></tr><tr><td>EPS (TTM)</td><td>0.89</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>6.17%</td></tr><tr><td>Operating Margin</td><td>11.58%</td></tr><tr><td>Return on Equity</td><td>5.99%</td></tr><tr><td>Revenue Growth (YoY)</td><td>9.20%</td></tr><tr><td>Free Cash Flow</td><td>$0.17B</td></tr><tr><td>Debt/Equity</td><td>7.04</td></tr><tr><td>Current Ratio</td><td>5.01</td></tr><tr><td>Institutional Ownership</td><td>87.27%</td></tr><tr><td>Short % of Float</td><td>6.33%</td></tr><tr><td>Beta</td><td>1.07</td></tr><tr><td>52-Week High</td><td>33.71</td></tr><tr><td>52-Week Low</td><td>16.40</td></tr><tr><td>Analyst Target (Mean)</td><td>33.40</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>None</td></tr>
+        <tr><td>Mean Score</td><td>N/A</td></tr>
+        <tr><td># Analyst Opinions</td><td>5</td></tr>
+        <tr><td>Strong Buy</td><td>1</td></tr><tr><td>Buy</td><td>3</td></tr><tr><td>Hold</td><td>1</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.39</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.36</td></tr>
+        <tr><td># Analysts (EPS)</td><td>4</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>IRWD</h2>
+        <div class="price">$4.16</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>4.16</td>
+          <td>4.13</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>24.3</td>
+          <td>18.37</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>3.94</td>
+          <td>4.47</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>4.16</td>
+          <td>4.18</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>35.3</td>
+          <td>25.68</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>3.94</td>
+          <td>4.47</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>4.16</td>
+          <td>4.13</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>84.72</td>
+          <td>80.94</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>-</td>
+          <td>3.94</td>
+          <td>4.18</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 1/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>4.08 - 4.18 (range 0.1)</td></tr>
+            <tr><td>1h entry support</td><td>3.94</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>3.86 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>4.61</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-09 (+55d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Ironwood Pharmaceuticals, Inc.</td></tr><tr><td>Sector</td><td>Healthcare</td></tr><tr><td>Industry</td><td>Drug Manufacturers - Specialty &amp; Generic</td></tr><tr><td>Market Cap</td><td>$0.69B</td></tr><tr><td>Trailing P/E</td><td>5.28</td></tr><tr><td>Forward P/E</td><td>2.78</td></tr><tr><td>PEG Ratio</td><td>N/A</td></tr><tr><td>Price/Book</td><td>-4.26</td></tr><tr><td>Price/Sales (TTM)</td><td>1.77</td></tr><tr><td>EPS (TTM)</td><td>0.79</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>33.36%</td></tr><tr><td>Operating Margin</td><td>70.16%</td></tr><tr><td>Return on Equity</td><td>N/A</td></tr><tr><td>Revenue Growth (YoY)</td><td>32.60%</td></tr><tr><td>Free Cash Flow</td><td>$0.12B</td></tr><tr><td>Debt/Equity</td><td>N/A</td></tr><tr><td>Current Ratio</td><td>6.06</td></tr><tr><td>Institutional Ownership</td><td>98.88%</td></tr><tr><td>Short % of Float</td><td>11.67%</td></tr><tr><td>Beta</td><td>0.21</td></tr><tr><td>52-Week High</td><td>5.78</td></tr><tr><td>52-Week Low</td><td>1.25</td></tr><tr><td>Analyst Target (Mean)</td><td>6.10</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>Buy</td></tr>
+        <tr><td>Mean Score</td><td>2.25</td></tr>
+        <tr><td># Analyst Opinions</td><td>4</td></tr>
+        <tr><td>Strong Buy</td><td>1</td></tr><tr><td>Buy</td><td>1</td></tr><tr><td>Hold</td><td>2</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.31</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.31</td></tr>
+        <tr><td># Analysts (EPS)</td><td>2</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>SONO</h2>
+        <div class="price">$15.59</div>
+        <div class="signal-badge buy">BUY</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>15.59</td>
+          <td>15.27</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>38.58</td>
+          <td>25.58</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>14.2</td>
+          <td>16.55</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>15.59</td>
+          <td>15.35</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>53.28</td>
+          <td>42.34</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>hammer</td>
+          <td>14.2</td>
+          <td>16.55</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>15.59</td>
+          <td>15.11</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>86.27</td>
+          <td>86.97</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>bullish_engulfing</td>
+          <td>14.5</td>
+          <td>15.6</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (hammer)</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge pass">PASS</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 3/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>15.09 - 15.6 (range 0.51)</td></tr>
+            <tr><td>1h entry support</td><td>14.5</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>14.18 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>17.7</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-11 (+57d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Sonos, Inc.</td></tr><tr><td>Sector</td><td>Technology</td></tr><tr><td>Industry</td><td>Consumer Electronics</td></tr><tr><td>Market Cap</td><td>$1.84B</td></tr><tr><td>Trailing P/E</td><td>34.62</td></tr><tr><td>Forward P/E</td><td>11.94</td></tr><tr><td>PEG Ratio</td><td>N/A</td></tr><tr><td>Price/Book</td><td>4.57</td></tr><tr><td>Price/Sales (TTM)</td><td>1.24</td></tr><tr><td>EPS (TTM)</td><td>0.45</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>3.82%</td></tr><tr><td>Operating Margin</td><td>4.40%</td></tr><tr><td>Return on Equity</td><td>14.18%</td></tr><tr><td>Revenue Growth (YoY)</td><td>8.80%</td></tr><tr><td>Free Cash Flow</td><td>$0.10B</td></tr><tr><td>Debt/Equity</td><td>14.08</td></tr><tr><td>Current Ratio</td><td>1.61</td></tr><tr><td>Institutional Ownership</td><td>104.68%</td></tr><tr><td>Short % of Float</td><td>15.83%</td></tr><tr><td>Beta</td><td>1.94</td></tr><tr><td>52-Week High</td><td>19.82</td></tr><tr><td>52-Week Low</td><td>12.44</td></tr><tr><td>Analyst Target (Mean)</td><td>18.62</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>None</td></tr>
+        <tr><td>Mean Score</td><td>N/A</td></tr>
+        <tr><td># Analyst Opinions</td><td>4</td></tr>
+        <tr><td>Strong Buy</td><td>0</td></tr><tr><td>Buy</td><td>3</td></tr><tr><td>Hold</td><td>1</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.05</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.04</td></tr>
+        <tr><td># Analysts (EPS)</td><td>1</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>ASTH</h2>
+        <div class="price">$39.59</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>39.59</td>
+          <td>38.81</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>57.92</td>
+          <td>47.35</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>36.66</td>
+          <td>39.95</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>39.59</td>
+          <td>38.5</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>77.09</td>
+          <td>61.68</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>36.66</td>
+          <td>39.95</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>39.59</td>
+          <td>38.39</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>90.06</td>
+          <td>91.39</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge fail">HOT</span></td>
+          <td>-</td>
+          <td>37.48</td>
+          <td>39.95</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 1/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>38.21 - 39.95 (range 1.74)</td></tr>
+            <tr><td>1h entry support</td><td>37.48</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>36.74 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>43.87</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-05 (+51d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Astrana Health, Inc.</td></tr><tr><td>Sector</td><td>Healthcare</td></tr><tr><td>Industry</td><td>Medical Care Facilities</td></tr><tr><td>Market Cap</td><td>$1.96B</td></tr><tr><td>Trailing P/E</td><td>48.29</td></tr><tr><td>Forward P/E</td><td>11.19</td></tr><tr><td>PEG Ratio</td><td>N/A</td></tr><tr><td>Price/Book</td><td>2.35</td></tr><tr><td>Price/Sales (TTM)</td><td>0.51</td></tr><tr><td>EPS (TTM)</td><td>0.82</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>1.05%</td></tr><tr><td>Operating Margin</td><td>3.53%</td></tr><tr><td>Return on Equity</td><td>6.90%</td></tr><tr><td>Revenue Growth (YoY)</td><td>48.50%</td></tr><tr><td>Free Cash Flow</td><td>$0.23B</td></tr><tr><td>Debt/Equity</td><td>163.62</td></tr><tr><td>Current Ratio</td><td>1.23</td></tr><tr><td>Institutional Ownership</td><td>66.10%</td></tr><tr><td>Short % of Float</td><td>12.60%</td></tr><tr><td>Beta</td><td>0.91</td></tr><tr><td>52-Week High</td><td>51.60</td></tr><tr><td>52-Week Low</td><td>18.08</td></tr><tr><td>Analyst Target (Mean)</td><td>51.50</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>None</td></tr>
+        <tr><td>Mean Score</td><td>N/A</td></tr>
+        <tr><td># Analyst Opinions</td><td>8</td></tr>
+        <tr><td>Strong Buy</td><td>2</td></tr><tr><td>Buy</td><td>7</td></tr><tr><td>Hold</td><td>1</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.86</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.79</td></tr>
+        <tr><td># Analysts (EPS)</td><td>2</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>PAYS</h2>
+        <div class="price">$12.82</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>MA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>12.82</td>
+          <td>11.4</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>41.49</td>
+          <td>42.7</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>12.08</td>
+          <td>13.7</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>12.82</td>
+          <td>12.56</td>
+          <td><span class="badge pass">UP</span></td>
+          <td>39.15</td>
+          <td>55.29</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>12.08</td>
+          <td>13.7</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>12.82</td>
+          <td>13.0</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>4.08</td>
+          <td>5.48</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>hammer</td>
+          <td>12.74</td>
+          <td>13.7</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 3/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Other levels</h3>
+          <table class="detail-table"><tbody>
+            <tr><td>Today's range</td><td>12.74 - 13.29 (range 0.55)</td></tr>
+            <tr><td>1h entry support</td><td>12.74</td></tr>
+            <tr><td>ATR(14) Suggested stop</td><td>12.37 (2.0x ATR)</td></tr>
+            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>13.5</strong></td></tr>
+          </tbody></table>
+
+        </div>
+      </div>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-11 (+57d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge fail">NOT MEMBER</span></td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (0 up / 0 down)</td><td>none</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table fundamentals-table"><tbody><tr><td>Name</td><td>Paysign, Inc.</td></tr><tr><td>Sector</td><td>Technology</td></tr><tr><td>Industry</td><td>Software - Infrastructure</td></tr><tr><td>Market Cap</td><td>$0.72B</td></tr><tr><td>Trailing P/E</td><td>49.35</td></tr><tr><td>Forward P/E</td><td>21.21</td></tr><tr><td>PEG Ratio</td><td>N/A</td></tr><tr><td>Price/Book</td><td>12.04</td></tr><tr><td>Price/Sales (TTM)</td><td>7.20</td></tr><tr><td>EPS (TTM)</td><td>0.26</td></tr><tr><td>Dividend Yield</td><td>N/A</td></tr><tr><td>Profit Margin</td><td>15.67%</td></tr><tr><td>Operating Margin</td><td>28.34%</td></tr><tr><td>Return on Equity</td><td>30.82%</td></tr><tr><td>Revenue Growth (YoY)</td><td>48.10%</td></tr><tr><td>Free Cash Flow</td><td>$0.01B</td></tr><tr><td>Debt/Equity</td><td>9.49</td></tr><tr><td>Current Ratio</td><td>1.14</td></tr><tr><td>Institutional Ownership</td><td>54.80%</td></tr><tr><td>Short % of Float</td><td>3.61%</td></tr><tr><td>Beta</td><td>0.80</td></tr><tr><td>52-Week High</td><td>14.43</td></tr><tr><td>52-Week Low</td><td>3.08</td></tr><tr><td>Analyst Target (Mean)</td><td>13.10</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Consensus</td><td>None</td></tr>
+        <tr><td>Mean Score</td><td>N/A</td></tr>
+        <tr><td># Analyst Opinions</td><td>5</td></tr>
+        <tr><td>Strong Buy</td><td>2</td></tr><tr><td>Buy</td><td>3</td></tr><tr><td>Hold</td><td>0</td></tr><tr><td>Sell</td><td>0</td></tr><tr><td>Strong Sell</td><td>0</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Current Consensus EPS</td><td>0.13</td></tr>
+        <tr><td>EPS 30 Days Ago</td><td>0.07</td></tr>
+        <tr><td># Analysts (EPS)</td><td>2</td></tr>
+        <tr><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section>
+</body>
+</html>

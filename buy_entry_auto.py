@@ -24,8 +24,25 @@ from event_catalysts import *
 # 2. Securely load API Token
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
-# 3. Run Core Screener
-num = 2
+
+small_enrichment_tickers = [
+    "QNST", "PGY", "STRA", "ETON"
+]
+
+large_enrichment_tickers = [
+   "ADI", "AMAT", "AMD", "APH", "CSCO", "CTSH", "DDOG", "ENTG", "ESTC", "EXLS",
+    "FLYW", "FORM", "FRSH", "GLW", "INGM", "KEYS", "LRCX", "MDB", "MRVL", "MSFT",
+    "MU", "NTAP", "NTNX", "NVDA", "ONTO", "P", "PLTR", "SMTC", "SNDK", "STX",
+    "TER", "TOST", "TWLO", "TXN", "VSH", "WDAY", "WDC", "WK", "ANET",
+]
+
+
+
+num = 0
+enrichment_tickers = small_enrichment_tickers
+#enrichment_tickers = large_enrichment_tickers
+
+
 
 fileapp = {
     0: "Small",
@@ -33,12 +50,6 @@ fileapp = {
     2: "Large"
 }.get(num, "Debug")
 
-enrichment_tickers = [
-   "ADI", "AMAT", "AMD", "APH", "CSCO", "CTSH", "DDOG", "ENTG", "ESTC", "EXLS",
-    "FLYW", "FORM", "FRSH", "GLW", "INGM", "KEYS", "LRCX", "MDB", "MRVL", "MSFT",
-    "MU", "NTAP", "NTNX", "NVDA", "ONTO", "P", "PLTR", "SMTC", "SNDK", "STX",
-    "TER", "TOST", "TWLO", "TXN", "VSH", "WDAY", "WDC", "WK", "ANET",
-]
 
 if not enrichment_tickers:
     print("No tickers")

@@ -112,6 +112,8 @@ CONFIG = {
     "ENABLE_ALTMAN_ZSCORE": 0,
     "ENABLE_CMF": 0,
     "ENABLE_CASH_METRICS": 0,
+    "ENABLE_DIP_STRATEGY": 0,
+    "ENABLE_VALUATION": 0,
 
     "OPTIONS_EXPIRY_INDEX": 0,
     "NEWS_HEADLINE_LIMIT": 3,
@@ -124,8 +126,7 @@ CONFIG = {
     "DIP_LOOKBACK_DAYS": 5,          # baseline window for "recent high" comparison
     "EARNINGS_EXCLUSION_DAYS": 3,    # exclude tickers within N days of an earnings event (past or future)
     "DIP_QUALITY_MIN_SCORE": 50,     # minimum fundamental quality score (0-100) to qualify as a "quality dip"
-    "ENABLE_DIP_STRATEGY": 0,
-    "ENABLE_VALUATION": 0,
+   
 }
 
 def set_pkl_path(size=0):
