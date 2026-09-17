@@ -30,17 +30,25 @@ small_enrichment_tickers = [
 ]
 
 large_enrichment_tickers = [
-   "ADI", "AMAT", "AMD", "APH", "CSCO", "CTSH", "DDOG", "ENTG", "ESTC", "EXLS",
-    "FLYW", "FORM", "FRSH", "GLW", "INGM", "KEYS", "LRCX", "MDB", "MRVL", "MSFT",
-    "MU", "NTAP", "NTNX", "NVDA", "ONTO", "P", "PLTR", "SMTC", "SNDK", "STX",
-    "TER", "TOST", "TWLO", "TXN", "VSH", "WDAY", "WDC", "WK", "ANET",
+
+    "ADI", "AMAT", "AMD", "AMRX", "AMZN", "ANET", "BE", "BG", "BWA", "CART",
+    "CAT", "ENTG", "FTI", "GLW", "HAL", "INCY", "INGM", "KEYS", "LRCX", "MRVL",
+    "MU", "NBIX", "NESR", "NTAP", "NVDA", "ONTO", "QTWO", "SMTC", "SNDK", "ST",
+    "STX", "TER", "TOST", "TRU", "WDC", "ZBRA", "A", "CARG", "CSCO", "CTSH",
+    "DHR", "ESTC", "EXLS", "FLYW", "FRSH", "GD", "GOOG", "GOOGL", "HQY", "LAUR",
+    "LH", "LLY", "MDB", "MGY", "MSFT", "NTNX", "OXY", "P", "PCAR", "PCTY",
+    "PLTR", "VEEV", "WDAY", "WK"
+
+
 ]
 
 
 
-num = 0
-enrichment_tickers = small_enrichment_tickers
-#enrichment_tickers = large_enrichment_tickers
+num = 2
+if num==0:
+    enrichment_tickers = small_enrichment_tickers
+else:
+    enrichment_tickers = large_enrichment_tickers
 
 
 
