@@ -33,7 +33,7 @@ Mon-Fri during market hours (9am-4pm ET; adjust to your machine's local tz):
 
 import os
 import argparse
-import subprocess
+import requests
 import numpy as np
 import pandas as pd
 import joblib
@@ -201,17 +201,24 @@ def scan(tickers, api_key, api_secret, model_bundle, cfg=PIPE_CONFIG, verbose=Tr
     return pd.DataFrame(results)
 
 
-def send_mac_notification(title, message):
-    """Best-effort desktop notification (macOS only, via osascript). Never
-    raises — a failed notification shouldn't break the scan."""
+def send_ntfy_notification(title, message):
+    """Best-effort push notification via ntfy.sh. Reads the topic from the
+    NTFY_TOPIC environment variable (set locally in .env, or as a GitHub
+    Actions secret when run in CI). Never raises — a failed notification
+    shouldn't break the scan."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        print("NTFY_TOPIC not set — skipping notification.")
+        return
     try:
-        # escape double quotes so a symbol/message with one doesn't break the AppleScript
-        safe_title = title.replace('"', '\\"')
-        safe_message = message.replace('"', '\\"')
-        subprocess.run(
-            ["osascript", "-e", f'display notification "{safe_message}" with title "{safe_title}" sound name "Glass"'],
-            check=False, capture_output=True, timeout=5,
+        resp = requests.post(
+            f"https://ntfy.sh/{topic}",
+            data=message.encode("utf-8"),
+            headers={"Title": title, "Priority": "default", "Tags": "chart_with_upwards_trend"},
+            timeout=10,
         )
+        resp.raise_for_status()
+        print(f"Notification sent to ntfy.sh/{topic} (status {resp.status_code}).")
     except Exception as e:
         print(f"Notification failed (non-fatal): {e}")
 
@@ -229,7 +236,7 @@ def main():
     parser.add_argument("--exclude-macro", action="store_true",
                          help="Exclude setups formed near a known macro event (FOMC, etc.) from the actionable list.")
     parser.add_argument("--no-notify", action="store_true",
-                         help="Disable the macOS desktop notification for newly actionable setups.")
+                         help="Disable the ntfy.sh push notification for newly actionable setups.")
     args = parser.parse_args()
 
     api_key = os.environ.get("ALPACA_API_KEY")
@@ -291,7 +298,7 @@ def main():
             msg = "; ".join(lines)
             if len(new_actionable) > 5:
                 msg += f"  (+{len(new_actionable) - 5} more)"
-            send_mac_notification(f"{len(new_actionable)} new FVG setup(s)", msg)
+            send_ntfy_notification(f"{len(new_actionable)} new FVG setup(s)", msg)
 
     shown = df if args.show_all else df[df["status"].isin(["WATCHING", "IN_TRADE"])]
     if shown.empty:
