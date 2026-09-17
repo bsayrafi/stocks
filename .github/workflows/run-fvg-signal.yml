@@ -48,7 +48,7 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: python3 fvg_live_signal.py --sector Technology
+        run: python3 fvg_live_signal.py --sector Technology --exclude-macro
 
       - name: Commit updated log back to the data branch
         run: |
