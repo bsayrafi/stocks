@@ -1,0 +1,111 @@
+{
+  "positions": {
+    "AAPL": {
+      "shares": 6,
+      "entry_price": 337.0,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 7.83083571428572,
+      "entry_stage": "running 118d, near 52w high"
+    },
+    "ABBV": {
+      "shares": 7,
+      "entry_price": 264.02,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 5.55143571428571,
+      "entry_stage": "running 84d, near 52w high"
+    },
+    "ACN": {
+      "shares": 5,
+      "entry_price": 190.29,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 6.05602857142857,
+      "entry_stage": "below its 200d avg"
+    },
+    "AMD": {
+      "shares": 1,
+      "entry_price": 545.09,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 21.975485714285696,
+      "entry_stage": "running 129d"
+    },
+    "C": {
+      "shares": 6,
+      "entry_price": 132.7,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 3.833514285714283,
+      "entry_stage": "running 346d"
+    },
+    "CB": {
+      "shares": 3,
+      "entry_price": 341.9,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 5.10623571428571,
+      "entry_stage": "running 218d"
+    },
+    "CRWD": {
+      "shares": 1,
+      "entry_price": 245.7,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 13.516328571428568,
+      "entry_stage": "running 104d, near 52w high"
+    },
+    "DVA": {
+      "shares": 2,
+      "entry_price": 183.09,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 5.508428571428569,
+      "entry_stage": "early"
+    },
+    "ELV": {
+      "shares": 1,
+      "entry_price": 414.26,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 10.989571428571432,
+      "entry_stage": "running 102d"
+    },
+    "GDDY": {
+      "shares": 2,
+      "entry_price": 98.15,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 4.0557000000000025,
+      "entry_stage": "below its 200d avg, well off highs"
+    },
+    "HPE": {
+      "shares": 1,
+      "entry_price": 61.04,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 4.122142857142857,
+      "entry_stage": "running 124d, near 52w high"
+    },
+    "HPQ": {
+      "shares": 4,
+      "entry_price": 34.66,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 1.7153571428571437,
+      "entry_stage": "established, near 52w high"
+    },
+    "INTC": {
+      "shares": 1,
+      "entry_price": 108.8,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 5.635792857142859,
+      "entry_stage": "running 277d"
+    },
+    "MDT": {
+      "shares": 2,
+      "entry_price": 92.77,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 2.386071428571429,
+      "entry_stage": "established"
+    },
+    "MET": {
+      "shares": 2,
+      "entry_price": 97.35,
+      "entry_date": "2026-09-18",
+      "atr_at_entry": 1.8907071428571445,
+      "entry_stage": "running 109d"
+    }
+  },
+  "cash": 900.2600000000016,
+  "last_run_date": "2026-09-18"
+}

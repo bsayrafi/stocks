@@ -258,7 +258,25 @@ def main():
         return
 
     df = df.sort_values("quality_score", ascending=False).reset_index(drop=True)
-    df["actionable"] = (df["quality_score"] >= min_score) & (df["status"].isin(["WATCHING", "IN_TRADE"]))
+
+    # a WATCHING setup whose price already blew past its own target without
+    # ever pulling back to fill isn't a real opportunity anymore — chasing it
+    # now means an undefined, untested risk:reward relative to the original plan
+    already_ran_past_target = (
+        ((df["direction"] == "BULL") & (df["last_close"] >= df["target"])) |
+        ((df["direction"] == "BEAR") & (df["last_close"] <= df["target"]))
+    ) & (df["status"] == "WATCHING")
+
+    # IN_TRADE based only on a near-edge touch isn't a confirmed real fill —
+    # an actual limit order sitting at the midpoint wouldn't have triggered yet
+    in_trade_without_real_fill = (df["status"] == "IN_TRADE") & (~df["midpoint_touched"])
+
+    df["actionable"] = (
+        (df["quality_score"] >= min_score)
+        & df["status"].isin(["WATCHING", "IN_TRADE"])
+        & (~already_ran_past_target)
+        & (~in_trade_without_real_fill)
+    )
     if args.exclude_macro:
         df["actionable"] = df["actionable"] & (~df["macro_event"])
 
