@@ -237,6 +237,9 @@ def main():
                          help="Exclude setups formed near a known macro event (FOMC, etc.) from the actionable list.")
     parser.add_argument("--no-notify", action="store_true",
                          help="Disable the ntfy.sh push notification for newly actionable setups.")
+    parser.add_argument("--chase-buffer", type=float, default=0.8,
+                         help="Fraction (0-1) of the entry-to-target distance a WATCHING setup can cover "
+                              "before it's excluded from actionable as already-chased. Default 0.8 (80%%).")
     args = parser.parse_args()
 
     api_key = os.environ.get("ALPACA_API_KEY")
@@ -259,13 +262,16 @@ def main():
 
     df = df.sort_values("quality_score", ascending=False).reset_index(drop=True)
 
-    # a WATCHING setup whose price already blew past its own target without
-    # ever pulling back to fill isn't a real opportunity anymore — chasing it
-    # now means an undefined, untested risk:reward relative to the original plan
-    already_ran_past_target = (
-        ((df["direction"] == "BULL") & (df["last_close"] >= df["target"])) |
-        ((df["direction"] == "BEAR") & (df["last_close"] <= df["target"]))
-    ) & (df["status"] == "WATCHING")
+    # a WATCHING setup whose price has already covered most of the distance
+    # toward target without ever pulling back to fill isn't a real opportunity
+    # anymore — waiting for a full target CROSS is too permissive right up to
+    # the line; this flags it once it's covered CHASE_BUFFER of that distance
+    progress_toward_target = np.where(
+        df["direction"] == "BULL",
+        (df["last_close"] - df["entry"]) / (df["target"] - df["entry"]),
+        (df["entry"] - df["last_close"]) / (df["entry"] - df["target"]),
+    )
+    already_ran_past_target = (progress_toward_target >= args.chase_buffer) & (df["status"] == "WATCHING")
 
     # IN_TRADE based only on a near-edge touch isn't a confirmed real fill —
     # an actual limit order sitting at the midpoint wouldn't have triggered yet
