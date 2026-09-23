@@ -196,8 +196,8 @@ def runCoreScreener(num=2, force_redownload=True) :
   # 1 Medium
   # 0 small
 setEnable(1)
-#runCoreScreener(num=0, force_redownload=True)
-runCoreScreener(num=0, force_redownload=True)
+runCoreScreener(num=0, force_redownload=False)
+runCoreScreener(num=2, force_redownload=False)
 setEnable(0)
 
 

@@ -44,7 +44,7 @@ large_enrichment_tickers = [
 
 
 
-num = 2
+num = 0
 if num==0:
     enrichment_tickers = small_enrichment_tickers
 else:
