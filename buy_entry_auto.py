@@ -26,7 +26,7 @@ os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 
 small_enrichment_tickers = [
-    "QTWO", "PGY", "RIGL", "ETON"
+    "QTWO", "PGY", "RIGL", "ETON", "CRWV", 
 ]
 
 large_enrichment_tickers = [

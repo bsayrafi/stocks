@@ -30,6 +30,7 @@ Signal logic:
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import html
 import os
 import constants
@@ -81,6 +82,15 @@ CONFIGH = {
     "SR_LOOKBACK": {"1D": 10, "4h": 20, "1h": 20},
 
     "SCORE_THRESHOLD": 3,          # out of 5 soft conditions
+
+    # HTML report price chart (display only, not part of the signal)
+    "CHART_OPEN": False,           # chart collapsed by default (each card has a show/hide link)
+    "CHART_DAYS": 7,               # number of recent trading days of 1h candles to plot
+    "CHART_MAS": [("ema", 9), ("ema", 50)],  # MA overlays drawn on the chart
+    "POC_BINS": 50,                # price buckets for the volume profile / POC
+    "MARKET_TZ": "America/New_York",
+    "MARKET_OPEN": "09:30",        # regular session, local to MARKET_TZ
+    "MARKET_CLOSE": "16:00",
 }
 
 
@@ -294,6 +304,64 @@ def day_range(hourly_df: pd.DataFrame) -> dict:
     high = float(todays_bars["High"].max())
     low = float(todays_bars["Low"].min())
     return {"day_high": round(high, 2), "day_low": round(low, 2), "day_range": round(high - low, 2)}
+
+
+def chart_window(hourly_df: pd.DataFrame, overlays: dict, days: int) -> dict:
+    """Slice the last `days` trading days of 1h bars, plus the matching values of
+    each overlay series (MAs computed on the full history, so already warmed up)."""
+    dates = pd.Index(hourly_df.index.date).unique()
+    start = dates[-days] if len(dates) >= days else dates[0]
+    mask = hourly_df.index.date >= start
+    return {
+        "ohlcv": hourly_df.loc[mask],
+        "overlays": {name: series.loc[mask] for name, series in overlays.items()},
+    }
+
+
+def volume_poc(df: pd.DataFrame, bins: int = 50) -> float:
+    """Point of Control: the price bucket with the most traded volume over `df`.
+    Each bar's volume is spread evenly across the buckets its Low-High range covers."""
+    lo, hi = float(df["Low"].min()), float(df["High"].max())
+    if hi <= lo:
+        return round(float(df["Close"].iloc[-1]), 2)
+    edges = np.linspace(lo, hi, bins + 1)
+    low = df["Low"].to_numpy(dtype=float)[:, None]
+    high = df["High"].to_numpy(dtype=float)[:, None]
+    vol = df["Volume"].to_numpy(dtype=float)
+
+    overlap = np.clip(np.minimum(high, edges[1:]) - np.maximum(low, edges[:-1]), 0, None)
+    rng = (high - low)
+    share = np.divide(overlap, rng, out=np.zeros_like(overlap), where=rng > 0)
+    profile = (share * vol[:, None]).sum(axis=0)
+
+    # zero-range bars: put all their volume in the single bucket they sit in
+    flat = (rng[:, 0] == 0)
+    if flat.any():
+        idx = np.clip(np.searchsorted(edges, low[flat, 0], side="right") - 1, 0, bins - 1)
+        np.add.at(profile, idx, vol[flat])
+
+    k = int(profile.argmax())
+    return round(float((edges[k] + edges[k + 1]) / 2), 2)
+
+
+def session_vwap(df: pd.DataFrame, tz: str, open_hhmm: str, close_hhmm: str) -> pd.Series:
+    """Intraday VWAP that resets at each regular-session open. Uses typical price
+    (H+L+C)/3 x volume. Bars outside regular hours (pre/after-market, if present)
+    are excluded and get NaN, matching how most platforms draw session VWAP."""
+    idx = df.index.tz_convert(tz) if df.index.tz is not None else df.index
+    mins = np.asarray(idx.hour * 60 + idx.minute)
+    oh, om = map(int, open_hhmm.split(":"))
+    ch, cm = map(int, close_hhmm.split(":"))
+    in_session = pd.Series((mins >= oh * 60 + om) & (mins < ch * 60 + cm), index=df.index)
+
+    typical = (df["High"] + df["Low"] + df["Close"]) / 3
+    pv = (typical * df["Volume"]).where(in_session)
+    vol = df["Volume"].where(in_session)
+    day = np.asarray(idx.date)
+    cum_pv = pv.groupby(day).cumsum()
+    cum_v = vol.groupby(day).cumsum()
+    vwap = (cum_pv / cum_v.replace(0, np.nan)).where(in_session)
+    return vwap
 
 
 # ---------------------------------------------------------------- fundamentals
@@ -554,6 +622,20 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     signal = generate_signal(results["1D"], results["4h"], results["1h"], h1_macd_ok, vol_ok,
                               current_price, entry_support, cfg)
 
+    # Chart data (display only): MA overlays on 1h + 7-day volume POC
+    chart_mas = {}
+    for ma_type, period in cfg.get("CHART_MAS", [(cfg["MA_TYPE"], cfg["MA_PERIOD"])]):
+        chart_mas[f"{ma_type.upper()}{period}"] = moving_average(tf_data["1h"], period, ma_type)
+    chart = chart_window(tf_data["1h"], chart_mas, cfg.get("CHART_DAYS", 7))
+    poc = volume_poc(chart["ohlcv"], cfg.get("POC_BINS", 50))
+
+    vwap_1h = session_vwap(tf_data["1h"], cfg.get("MARKET_TZ", "America/New_York"),
+                           cfg.get("MARKET_OPEN", "09:30"), cfg.get("MARKET_CLOSE", "16:00"))
+    chart["vwap"] = vwap_1h.loc[chart["ohlcv"].index]
+    vwap_valid = vwap_1h.dropna()
+    vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
+    above_vwap = (current_price > vwap_now) if vwap_now is not None else None
+
     fundamentals = fetch_fundamentals(cfg["TICKER"])
     analyst = fetch_analyst_data(cfg["TICKER"])
     #catalysts = catalyst_snapshot(cfg["TICKER"], sp500_members=sp500_members)
@@ -575,7 +657,10 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "fundamentals": fundamentals,
         "analyst": analyst,
         "catalysts": catalysts,
-
+        "chart": chart,
+        "poc": poc,
+        "vwap": vwap_now,
+        "above_vwap": above_vwap,
     }
 
 
@@ -595,7 +680,7 @@ def print_report(report: dict) -> None:
         r = results[tf]
         sr = sr_levels[tf]
         patterns = ", ".join(r["patterns_detected"]) if r["patterns_detected"] else "none"
-        print(f"[{tf}] close={r['close']} MA{cfg['MA_PERIOD']}={r['MA']} trend_up={r['trend_up']!s:<5} "
+        print(f"[{tf}] close={r['close']} {cfg['MA_TYPE'].upper()}{cfg['MA_PERIOD']}={r['MA']} trend_up={r['trend_up']!s:<5} "
               f"%K={r['%K']:>6} %D={r['%D']:>6} K>D={r['k_above_d']!s:<5} "
               f"stoch_bullish={r['stoch_bullish']!s:<5} overbought={r['overbought']!s:<5} "
               f"candles=[{patterns}]")
@@ -605,6 +690,12 @@ def print_report(report: dict) -> None:
     print(f"\nToday's range: {today_range['day_low']} - {today_range['day_high']} "
           f"(range: {today_range['day_range']})")
 
+    if report.get("poc") is not None:
+        print(f"POC ({cfg.get('CHART_DAYS', 7)}d volume profile): {report['poc']}")
+    if report.get("vwap") is not None:
+        side = "above" if report["above_vwap"] else "below"
+        print(f"Session VWAP: {report['vwap']} (price {side} VWAP)")
+
     print(f"\n1h MACD bullish: {report['h1_macd_ok']}")
     print(f"1h volume confirmed (>= {cfg['VOLUME_MULTIPLIER']}x {cfg['VOLUME_MA_PERIOD']}-period avg): {report['vol_ok']}")
     print(f"ATR({cfg['ATR_PERIOD']}) suggested stop: {report['stop']} "
@@ -612,7 +703,7 @@ def print_report(report: dict) -> None:
 
     # <--- ADD THIS BLOCK --->
     risk = report['current_price'] - report['stop']
-    print(f"Take-Profit Target (1.5x R:R): {report['take_profit_target']} "
+    print(f"Take-Profit Target (1.5x R:R): {report['take_profit']} "
           f"(Risking {risk:.2f} per share)")
     # <--------------------->
 
@@ -682,7 +773,7 @@ def print_report(report: dict) -> None:
 
 def screen_ticker(ticker):
     """Run the screen for a single ticker and print its console report."""
-    report = run_screen(ticker, CONFIG)
+    report = run_screen(ticker, CONFIGH)
     #print_report(report)
     return report
 
@@ -695,6 +786,250 @@ def _badge(ok: bool, true_text: str = "PASS", false_text: str = "FAIL") -> str:
     return f'<span class="badge {cls}">{html.escape(str(text))}</span>'
 
 
+def _four_col_table(items: list, extra_cls: str = "") -> str:
+    """Render (label_html, value_html) pairs as a 4-column table
+    (label | value | label | value). First half runs down the left pair, second
+    half down the right pair, so it still reads top-to-bottom. Inputs must
+    already be HTML-safe (so values can contain badges)."""
+    if not items:
+        return ""
+    half = (len(items) + 1) // 2
+    rows = ""
+    for i in range(half):
+        right = items[i + half] if i + half < len(items) else ("", "")
+        rows += (f"<tr><td>{items[i][0]}</td><td>{items[i][1]}</td>"
+                 f"<td>{right[0]}</td><td>{right[1]}</td></tr>")
+    return f"""
+      <table class="detail-table four-col {extra_cls}">
+        <colgroup><col class="c-lbl"><col class="c-val"><col class="c-lbl"><col class="c-val"></colgroup>
+        <tbody>{rows}
+      </tbody></table>"""
+
+
+def _hhmm_to_min(s: str) -> int:
+    h, m = s.split(":")
+    return int(h) * 60 + int(m)
+
+
+def render_price_chart_svg(report: dict) -> str:
+    """Inline SVG candlestick chart of the last CHART_DAYS trading days (1h bars),
+    with MA overlays, POC, 1h support, stop and take-profit levels, dotted
+    market open/close markers, and a volume strip. Pure SVG - no JS or
+    external libraries. Hover a candle for its OHLCV."""
+    chart = report.get("chart")
+    if not chart or chart["ohlcv"].empty:
+        return ""
+    df = chart["ohlcv"]
+    overlays = chart.get("overlays") or {}
+    cfg = report["cfg"]
+    n = len(df)
+
+    # ---- timestamps in the exchange's local time (for sessions + labels)
+    idx = df.index
+    if idx.tz is not None:
+        idx = idx.tz_convert(cfg.get("MARKET_TZ", "America/New_York"))
+    dates = idx.date
+    mins = np.asarray(idx.hour * 60 + idx.minute)
+    open_m = _hhmm_to_min(cfg.get("MARKET_OPEN", "09:30"))
+    close_m = _hhmm_to_min(cfg.get("MARKET_CLOSE", "16:00"))
+
+    # ---- geometry: a small gap between sessions so close/open lines don't overlap
+    W = 1000  # ~ the card's rendered width on desktop, so text renders near 1:1
+    pad_l, pad_r, pad_t = 56, 160, 10
+    AXIS_W = 46  # room for right-axis tick labels; level labels sit to the right of it
+    price_h, gap, vol_h, axis_h = 500, 12, 110, 22
+    H = pad_t + price_h + gap + vol_h + axis_h
+    plot_w = W - pad_l - pad_r
+    new_day = [i == 0 or dates[i] != dates[i - 1] for i in range(n)]
+    n_days = sum(new_day)
+    SESSION_GAP = 0.8  # in candle widths
+    step = plot_w / (n + SESSION_GAP * (n_days - 1))
+    body_w = max(1.5, step * 0.62)
+
+    left, cur = [], float(pad_l)
+    for i in range(n):
+        if new_day[i] and i > 0:
+            cur += SESSION_GAP * step
+        left.append(cur)
+        cur += step
+
+    def x(i):
+        return left[i] + step / 2
+
+    # ---- horizontal levels
+    levels = [
+        ("Target", report.get("take_profit"), "lvl-target"),
+        ("POC", report.get("poc"), "lvl-poc"),
+        ("Support", report.get("entry_support"), "lvl-support"),
+        ("Stop", report.get("stop"), "lvl-stop"),
+    ]
+    levels = [(lbl, float(v), cls) for lbl, v, cls in levels if v is not None and pd.notna(v)]
+
+    overlays_clean = {name: s.dropna() for name, s in overlays.items()}
+    vwap_s = chart.get("vwap")
+    vwap_clean = vwap_s.dropna() if vwap_s is not None else pd.Series(dtype=float)
+    if not vwap_clean.empty:
+        overlays_clean_for_range = list(overlays_clean.values()) + [vwap_clean]
+    else:
+        overlays_clean_for_range = list(overlays_clean.values())
+    candidates = [float(df["Low"].min()), float(df["High"].max())] + [v for _, v, _ in levels]
+    for s in overlays_clean_for_range:
+        if not s.empty:
+            candidates += [float(s.min()), float(s.max())]
+    lo, hi = min(candidates), max(candidates)
+    pad_p = (hi - lo) * 0.04 or 1.0
+    lo, hi = lo - pad_p, hi + pad_p
+
+    def y(p):
+        return pad_t + (hi - p) / (hi - lo) * price_h
+
+    vol_top = pad_t + price_h + gap
+    vol_bot = vol_top + vol_h
+    vmax = float(df["Volume"].max()) or 1.0
+
+    def vy(v):
+        return vol_bot - (v / vmax) * vol_h
+
+    parts = []
+
+    # ---- price grid: "nice" round-number ticks (…0.5, 1, 2, 2.5, 5…), ~10 across
+    # the panel (~50px apart), dotted gridlines, labels on both axes + tick marks on the right
+    raw_step = (hi - lo) / 10
+    mag = 10 ** np.floor(np.log10(raw_step))
+    tick_step = min((m * mag for m in (1, 2, 2.5, 5, 10)), key=lambda st: abs(np.log(st / raw_step)))
+    decimals = 2 if tick_step < 1 else (1 if tick_step % 1 else 0)
+    right_x = pad_l + plot_w
+    p = np.ceil(lo / tick_step) * tick_step
+    while p <= hi:
+        yy = y(p)
+        label = f"{p:.{decimals}f}"
+        parts.append(f'<line class="grid" x1="{pad_l}" x2="{right_x}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
+        parts.append(f'<line class="tick" x1="{right_x}" x2="{right_x + 4}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
+        parts.append(f'<text class="axis" x="{pad_l - 6}" y="{yy + 3:.1f}" text-anchor="end">{label}</text>')
+        parts.append(f'<text class="axis" x="{right_x + 7}" y="{yy + 3:.1f}">{label}</text>')
+        p += tick_step
+    parts.append(f'<line class="tick" x1="{right_x}" x2="{right_x}" y1="{pad_t}" y2="{pad_t + price_h}"/>')
+
+    # ---- market open / close markers (dotted white) + date labels, per session
+    day_starts = [i for i in range(n) if new_day[i]] + [n]
+    for d in range(n_days):
+        ks = list(range(day_starts[d], day_starts[d + 1]))
+        starts = mins[ks]
+        parts.append(f'<text class="axis" x="{left[ks[0]] + 2:.1f}" y="{H - 6}">'
+                     f'{idx[ks[0]].strftime("%a %d %b")}</text>')
+
+        # open: left edge of first bar if it starts at/after the open,
+        # else interpolate inside the bar that contains the open (pre-market data)
+        if starts[0] >= open_m:
+            ox = left[ks[0]]
+        else:
+            j = max(j for j in range(len(ks)) if starts[j] <= open_m)
+            nxt = starts[j + 1] if j + 1 < len(ks) else starts[j] + 60
+            ox = left[ks[j]] + step * min(1.0, (open_m - starts[j]) / max(nxt - starts[j], 1))
+
+        # close: right edge of the last bar if it's the closing bar, else
+        # interpolate (after-hours data); skip if the session hasn't reached it yet
+        cx = None
+        if starts[-1] < close_m:
+            if close_m - starts[-1] <= 60:
+                cx = left[ks[-1]] + step
+        else:
+            j = max(j for j in range(len(ks)) if starts[j] <= close_m) if starts[0] <= close_m else None
+            if j is not None:
+                nxt = starts[j + 1] if j + 1 < len(ks) else starts[j] + 60
+                cx = left[ks[j]] + step * min(1.0, (close_m - starts[j]) / max(nxt - starts[j], 1))
+
+        for xx, what in ((ox, "Market open"), (cx, "Market close")):
+            if xx is not None:
+                parts.append(f'<line class="session" x1="{xx:.1f}" x2="{xx:.1f}" y1="{pad_t}" y2="{vol_bot}">'
+                             f'<title>{what} {idx[ks[0]].strftime("%a %d %b")}</title></line>')
+
+    # ---- standard filled candles: green if close >= open, red otherwise
+    color_cls = ["up" if c >= o else "down" for o, c in zip(df["Open"], df["Close"])]
+
+    # ---- volume bars
+    for i, (_, row) in enumerate(df.iterrows()):
+        cls = color_cls[i]
+        top = vy(float(row["Volume"]))
+        parts.append(f'<rect class="vol {cls}" x="{x(i) - body_w / 2:.1f}" y="{top:.1f}" '
+                     f'width="{body_w:.1f}" height="{vol_bot - top:.1f}"/>')
+
+    # ---- candles (with native hover tooltip)
+    for i, (_, row) in enumerate(df.iterrows()):
+        o, h, l, c, v = (float(row[k]) for k in ("Open", "High", "Low", "Close", "Volume"))
+        cls = color_cls[i]
+        body_top, body_bot = y(max(o, c)), y(min(o, c))
+        tip = f"{idx[i].strftime('%a %d %b %H:%M')}  O {o:.2f}  H {h:.2f}  L {l:.2f}  C {c:.2f}  Vol {v:,.0f}"
+        parts.append(
+            f'<g class="candle {cls}"><title>{html.escape(tip)}</title>'
+            f'<line x1="{x(i):.1f}" x2="{x(i):.1f}" y1="{y(h):.1f}" y2="{y(l):.1f}"/>'
+            f'<rect x="{x(i) - body_w / 2:.1f}" y="{body_top:.1f}" width="{body_w:.1f}" '
+            f'height="{max(body_bot - body_top, 1):.1f}"/></g>'
+        )
+
+    # ---- moving-average overlays
+    pos = {ts: i for i, ts in enumerate(df.index)}
+    legend_mas = []
+    for k, (name, s) in enumerate(overlays_clean.items()):
+        pts = " ".join(f"{x(pos[ts]):.1f},{y(float(val)):.1f}" for ts, val in s.items())
+        if pts:
+            parts.append(f'<polyline class="ma ma-{k % 4}" points="{pts}"><title>{html.escape(name)}</title></polyline>')
+        legend_mas.append(f'<i class="sw ma-sw ma-{k % 4}"></i>{html.escape(name)}')
+
+    # ---- session VWAP: one segment per session (it resets at each open)
+    if not vwap_clean.empty:
+        vdays = np.asarray((vwap_clean.index.tz_convert(cfg.get("MARKET_TZ", "America/New_York"))
+                            if vwap_clean.index.tz is not None else vwap_clean.index).date)
+        for dday in pd.unique(vdays):
+            seg = vwap_clean[vdays == dday]
+            pts = " ".join(f"{x(pos[ts]):.1f},{y(float(val)):.1f}" for ts, val in seg.items())
+            if len(seg) == 1:
+                xx, yy = x(pos[seg.index[0]]), y(float(seg.iloc[0]))
+                pts = f"{xx - step / 2:.1f},{yy:.1f} {xx + step / 2:.1f},{yy:.1f}"
+            parts.append(f'<polyline class="vwap" points="{pts}"><title>VWAP {dday}</title></polyline>')
+        levels.append(("VWAP", float(vwap_clean.iloc[-1]), "lvl-vwap"))
+        legend_mas.append('<i class="sw ma-sw vwap-sw"></i>VWAP')
+
+    # ---- horizontal levels, labelled on the right (nudged apart if they collide)
+    label_ys = []
+    for lbl, val, cls in sorted(levels, key=lambda t: -t[1]):
+        yy = y(val)
+        ly = yy + 3
+        while any(abs(ly - prev) < 12 for prev in label_ys):
+            ly += 12
+        label_ys.append(ly)
+        if cls != "lvl-vwap":  # VWAP is a moving line - label only, no horizontal
+            parts.append(f'<line class="lvl {cls}" x1="{pad_l}" x2="{pad_l + plot_w}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
+        parts.append(f'<text class="lvl-label {cls}" x="{pad_l + plot_w + AXIS_W}" y="{ly:.1f}">{lbl} {val:.2f}</text>')
+
+    # ---- last-price marker
+    last_c = float(df["Close"].iloc[-1])
+    parts.append(f'<circle class="last" cx="{x(n - 1):.1f}" cy="{y(last_c):.1f}" r="3"/>')
+
+    first_o = float(df["Open"].iloc[0])
+    chg = (last_c / first_o - 1) * 100 if first_o else 0.0
+    chg_cls = "pass" if chg >= 0 else "fail"
+
+    return f"""
+      <details class="chart-toggle"{' open' if cfg.get('CHART_OPEN', True) else ''}>
+        <summary><span class="when-closed">&#9656; Show chart</span><span class="when-open">&#9662; Hide chart</span></summary>
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <span>Last {n_days} trading days &middot; 1h candles</span>
+          <span class="badge {chg_cls}">{chg:+.2f}%</span>
+          <span class="legend">{' '.join(legend_mas)}
+            <i class="sw lvl-poc"></i>POC <i class="sw lvl-support"></i>1h support
+            <i class="sw lvl-stop"></i>Stop <i class="sw lvl-target"></i>Target
+            <i class="sw session-sw"></i>Open/close</span>
+        </div>
+        <svg class="price-chart" viewBox="0 0 {W} {H}"
+             role="img" aria-label="{html.escape(report['ticker'])} {n_days}-day price chart">
+          {''.join(parts)}
+        </svg>
+      </div>
+      </details>"""
+
+
 def render_ticker_html(report: dict) -> str:
     cfg = report["cfg"]
     results = report["results"]
@@ -705,48 +1040,40 @@ def render_ticker_html(report: dict) -> str:
     scd = signal["structural_confirmation_detail"]
 
     signal_cls = "buy" if signal["signal"] == "BUY" else "wait"
+    vwap_badge = "" if report.get("above_vwap") is None else _badge(report["above_vwap"], "ABOVE", "BELOW")
 
     fundamentals = report.get("fundamentals") or {}
-    fundamentals_rows = "".join(
-        f"<tr><td>{html.escape(label)}</td><td>{html.escape(str(value))}</td></tr>"
-        for label, value in fundamentals.items()
-    )
     fundamentals_block = ""
-    if fundamentals_rows:
-        fundamentals_block = f"""
-      <h3>Fundamentals</h3>
-      <table class="detail-table fundamentals-table"><tbody>{fundamentals_rows}
-      </tbody></table>"""
+    if fundamentals:
+        fundamentals_block = "\n      <h3>Fundamentals</h3>" + _four_col_table(
+            [(html.escape(label), html.escape(str(value))) for label, value in fundamentals.items()],
+            "fundamentals-table")
 
     analyst = report.get("analyst") or {}
     analyst_block = ""
     if analyst:
         counts = analyst.get("recommendation_counts") or {}
-        counts_rows = "".join(
-            f"<tr><td>{html.escape(label)}</td><td>{n}</td></tr>" for label, n in counts.items()
-        )
         eps_improving = analyst.get("eps_improving")
         if eps_improving is None:
             eps_trend_html = '<span class="badge">N/A</span>'
         else:
             eps_trend_html = _badge(eps_improving, "IMPROVING", "DETERIORATING")
 
-        analyst_block = f"""
-      <h3>Analyst Recommendations</h3>
-      <table class="detail-table"><tbody>
-        <tr><td>Consensus</td><td>{html.escape(analyst['recommendation_key'])}</td></tr>
-        <tr><td>Mean Score</td><td>{html.escape(analyst['recommendation_mean'])}</td></tr>
-        <tr><td># Analyst Opinions</td><td>{html.escape(analyst['num_analyst_opinions'])}</td></tr>
-        {counts_rows}
-      </tbody></table>
-
-      <h3>EPS Estimate Revisions (current quarter)</h3>
-      <table class="detail-table"><tbody>
-        <tr><td>Current Consensus EPS</td><td>{html.escape(analyst['eps_current'])}</td></tr>
-        <tr><td>EPS 30 Days Ago</td><td>{html.escape(analyst['eps_30d_ago'])}</td></tr>
-        <tr><td># Analysts (EPS)</td><td>{html.escape(analyst['eps_num_analysts'])}</td></tr>
-        <tr><td>EPS Trend</td><td>{eps_trend_html}</td></tr>
-      </tbody></table>"""
+        rec_items = [
+            ("Consensus", html.escape(analyst["recommendation_key"])),
+            ("Mean Score", html.escape(analyst["recommendation_mean"])),
+            ("# Analyst Opinions", html.escape(analyst["num_analyst_opinions"])),
+        ] + [(html.escape(label), str(n)) for label, n in counts.items()]
+        eps_items = [
+            ("Current Consensus EPS", html.escape(analyst["eps_current"])),
+            ("EPS 30 Days Ago", html.escape(analyst["eps_30d_ago"])),
+            ("# Analysts (EPS)", html.escape(analyst["eps_num_analysts"])),
+            ("EPS Trend", eps_trend_html),
+        ]
+        analyst_block = (
+            "\n      <h3>Analyst Recommendations</h3>" + _four_col_table(rec_items)
+            + "\n\n      <h3>EPS Estimate Revisions (current quarter)</h3>" + _four_col_table(eps_items)
+        )
 
     catalysts = report.get("catalysts") or {}
     catalysts_block = ""
@@ -863,11 +1190,12 @@ def render_ticker_html(report: dict) -> str:
         <div class="price">${report['current_price']:.2f}</div>
         <div class="signal-badge {signal_cls}">{signal['signal']}</div>
       </div>
+      {render_price_chart_svg(report)}
 
       <table class="tf-table">
         <thead>
           <tr>
-            <th>TF</th><th>Close</th><th>MA{cfg['MA_PERIOD']}</th><th>Trend</th>
+            <th>TF</th><th>Close</th><th>{cfg['MA_TYPE'].upper()}{cfg['MA_PERIOD']}</th><th>Trend</th>
             <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
             <th>Candles</th><th>Support</th><th>Resistance</th>
           </tr>
@@ -897,6 +1225,8 @@ def render_ticker_html(report: dict) -> str:
           <table class="detail-table"><tbody>
             <tr><td>Today's range</td><td>{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})</td></tr>
             <tr><td>1h entry support</td><td>{report['entry_support']}</td></tr>
+            <tr><td>POC ({cfg.get('CHART_DAYS', 7)}d volume profile)</td><td>{report.get('poc', 'N/A')}</td></tr>
+            <tr><td>Session VWAP</td><td>{report.get('vwap') if report.get('vwap') is not None else 'N/A'} {vwap_badge}</td></tr>
             <tr><td>ATR({cfg['ATR_PERIOD']}) Suggested stop</td><td>{report['stop']} ({cfg['ATR_STOP_MULTIPLIER']}x ATR)</td></tr>
             <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>{report['take_profit']}</strong></td></tr>
           </tbody></table>
@@ -927,6 +1257,12 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
     --fail: #e74c3c;
     --buy: #2ecc71;
     --wait: #556070;
+    --ma0: #c39bd3;  /* EMA9  */
+    --ma1: #f5b041;
+    --ma2: #48c9b0;
+    --ma3: #85c1e9;
+    --poc: #ff79c6;
+    --vwap: #ffffff;
   }}
   * {{ box-sizing: border-box; }}
   body {{
@@ -958,7 +1294,13 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   h3 {{ font-size: 13px; color: var(--accent); margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.03em; }}
   .detail-table td:first-child {{ color: var(--text); }}
   .fundamentals-table {{ margin-bottom: 18px; }}
-  .fundamentals-table td:first-child {{ color: var(--muted); width: 45%; }}
+  .four-col {{ table-layout: fixed; margin-bottom: 18px; }}
+  .four-col col.c-lbl {{ width: 30%; }}
+  .four-col col.c-val {{ width: 20%; }}
+  .four-col td:nth-child(odd) {{ color: var(--muted); }}
+  .four-col td:nth-child(2) {{ border-right: 1px solid var(--border); padding-right: 16px; }}
+  .four-col td:nth-child(3) {{ padding-left: 16px; }}
+  .four-col td {{ overflow-wrap: anywhere; }}
   .note {{ color: var(--muted); font-size: 13px; margin-top: 10px; }}
 
   .badge {{
@@ -967,6 +1309,59 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   }}
   .badge.pass {{ background: rgba(46,204,113,0.15); color: var(--pass); }}
   .badge.fail {{ background: rgba(231,76,60,0.15); color: var(--fail); }}
+
+  /* ---- 7-day price chart */
+  .chart-wrap {{ margin: 4px 0 20px; }}
+  .chart-toggle {{ margin: 0 0 12px; }}
+  .chart-toggle summary {{ list-style: none; cursor: pointer; color: var(--accent);
+                           font-size: 12px; display: inline-block; margin-bottom: 6px; user-select: none; }}
+  .chart-toggle summary::-webkit-details-marker {{ display: none; }}
+  .chart-toggle summary:hover {{ text-decoration: underline; }}
+  .chart-toggle .when-open {{ display: none; }}
+  .chart-toggle[open] .when-open {{ display: inline; }}
+  .chart-toggle[open] .when-closed {{ display: none; }}
+  .chart-head {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                 color: var(--muted); font-size: 12px; margin-bottom: 6px; }}
+  .chart-head .legend {{ margin-left: auto; display: flex; align-items: center; gap: 6px; }}
+  .sw {{ display: inline-block; width: 14px; height: 0; border-top: 2px dashed; margin-left: 8px; }}
+  .sw.ma-sw {{ border-top-style: solid; }}
+  .sw.ma-0 {{ border-color: var(--ma0); }} .sw.ma-1 {{ border-color: var(--ma1); }}
+  .sw.ma-2 {{ border-color: var(--ma2); }} .sw.ma-3 {{ border-color: var(--ma3); }}
+  .sw.lvl-poc {{ border-color: var(--poc); }}
+  .sw.session-sw {{ border-top: 2px dotted var(--text); }}
+  .sw.lvl-support {{ border-color: var(--accent); }}
+  .sw.lvl-stop {{ border-color: var(--fail); }}
+  .sw.lvl-target {{ border-color: var(--pass); }}
+  .price-chart {{ width: 100%; height: auto; display: block; }}  /* keeps aspect ratio, so text isn't stretched */
+  .price-chart .grid {{ stroke: var(--muted); stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 1 4; }}
+  .price-chart .tick {{ stroke: var(--muted); stroke-width: 1; }}
+  .price-chart .axis {{ fill: var(--muted); font-size: 10px; }}
+  .price-chart .candle line {{ stroke-width: 1; }}
+  .price-chart .candle.up line {{ stroke: var(--pass); }}
+  .price-chart .candle.down line {{ stroke: var(--fail); }}
+  .price-chart .candle.up rect {{ fill: var(--pass); }}
+  .price-chart .candle.down rect {{ fill: var(--fail); }}
+  .price-chart .candle:hover rect {{ opacity: 0.7; }}
+  .price-chart .vol.up {{ fill: rgba(46,204,113,0.35); }}
+  .price-chart .vol.down {{ fill: rgba(231,76,60,0.35); }}
+  .price-chart .ma {{ fill: none; stroke-width: 1.5; }}
+  .price-chart .ma.ma-0 {{ stroke: var(--ma0); }} .price-chart .ma.ma-1 {{ stroke: var(--ma1); }}
+  .price-chart .ma.ma-2 {{ stroke: var(--ma2); }} .price-chart .ma.ma-3 {{ stroke: var(--ma3); }}
+  .price-chart .session {{ stroke: #ffffff; stroke-opacity: 0.55; stroke-width: 1; stroke-dasharray: 1 3; }}
+  .price-chart .lvl.lvl-poc {{ stroke: var(--poc); }}
+  .price-chart .lvl-label.lvl-poc {{ fill: var(--poc); }}
+  .price-chart .vwap {{ fill: none; stroke: var(--vwap); stroke-width: 1.8; stroke-opacity: 0.9; }}
+  .price-chart .lvl-label.lvl-vwap {{ fill: var(--vwap); }}
+  .sw.vwap-sw {{ border-color: var(--vwap); }}
+  .price-chart .lvl {{ stroke-width: 1; stroke-dasharray: 5 4; }}
+  .price-chart .lvl.lvl-support {{ stroke: var(--accent); }}
+  .price-chart .lvl.lvl-stop {{ stroke: var(--fail); }}
+  .price-chart .lvl.lvl-target {{ stroke: var(--pass); }}
+  .price-chart .lvl-label {{ font-size: 11px; font-weight: 600; }}
+  .price-chart .lvl-label.lvl-support {{ fill: var(--accent); }}
+  .price-chart .lvl-label.lvl-stop {{ fill: var(--fail); }}
+  .price-chart .lvl-label.lvl-target {{ fill: var(--pass); }}
+  .price-chart .last {{ fill: var(--text); }}
 </style>
 </head>
 <body>
