@@ -1,39 +1,67 @@
 Live universe: 208 symbols (0 currently held)
 [BRK-B] fetch failed: {"message":"invalid symbol: BRK-B"}
 
-TSM daily signal -- 2026-09-18
+TSM daily signal -- 2026-09-19
 
-CONFIRMED ENTRIES (15) -- buy at next open:
-  AAPL: 6 sh @ ~337.00  (mom=0.85, ADX=16, RSI=69)  -- running 118d, near 52w high
-  ABBV: 7 sh @ ~264.02  (mom=0.64, ADX=18, RSI=58)  -- running 84d, near 52w high
-  ACN: 5 sh @ ~190.29  (mom=0.23, ADX=21, RSI=53)  -- below its 200d avg
-  AMD: 1 sh @ ~545.09  (mom=1.21, ADX=13, RSI=67)  -- running 129d
-  C: 6 sh @ ~132.70  (mom=0.32, ADX=12, RSI=50)  -- running 346d
-  CB: 3 sh @ ~341.90  (mom=0.47, ADX=12, RSI=57)  -- running 218d
-  CRWD: 1 sh @ ~245.70  (mom=1.28, ADX=20, RSI=58)  -- running 104d, near 52w high
-  DVA: 2 sh @ ~183.09  (mom=0.46, ADX=24, RSI=55)  -- early
-  ELV: 1 sh @ ~414.26  (mom=0.63, ADX=14, RSI=59)  -- running 102d
-  GDDY: 2 sh @ ~98.15  (mom=0.07, ADX=14, RSI=52)  -- below its 200d avg, well off highs
-  HPE: 1 sh @ ~61.04  (mom=1.09, ADX=13, RSI=59)  -- running 124d, near 52w high
-  HPQ: 4 sh @ ~34.66  (mom=0.71, ADX=31, RSI=68)  -- established, near 52w high
-  INTC: 1 sh @ ~108.80  (mom=1.20, ADX=15, RSI=68)  -- running 277d
-  MDT: 2 sh @ ~92.77  (mom=0.24, ADX=29, RSI=61)  -- established
-  MET: 2 sh @ ~97.35  (mom=0.85, ADX=12, RSI=54)  -- running 109d
+CONFIRMED ENTRIES (15) -- ranked by score, buy at next open:
+  #2 AMD: 2 sh @ ~559.82  (score=0.87, mom=1.50, ADX=15, RSI=73)  -- running 130d, near 52w high
+  #3 INTC: 7 sh @ ~108.60  (score=0.80, mom=1.26, ADX=16, RSI=72)  -- running 278d
+  #4 HPE: 9 sh @ ~60.76  (score=0.75, mom=1.29, ADX=13, RSI=61)  -- running 125d, near 52w high
+  #5 DELL: 1 sh @ ~568.06  (score=0.73, mom=2.03, ADX=20, RSI=67)  -- running 141d, near 52w high
+  #6 VTRS: 90 sh @ ~16.95  (score=0.72, mom=1.02, ADX=14, RSI=63)  -- running 244d
+  #7 AAPL: 3 sh @ ~336.13  (score=0.68, mom=0.90, ADX=17, RSI=65)  -- running 119d, near 52w high
+  #8 COHR: 1 sh @ ~317.36  (score=0.64, mom=0.52, ADX=10, RSI=61)  -- just started
+  #10 WST: 2 sh @ ~362.31  (score=0.63, mom=0.84, ADX=21, RSI=72)  -- running 116d, near 52w high
+  #11 ELV: 1 sh @ ~410.95  (score=0.60, mom=0.63, ADX=13, RSI=60)  -- running 103d
+  #12 FFIV: 1 sh @ ~432.03  (score=0.60, mom=0.71, ADX=20, RSI=68)  -- running 140d, near 52w high
+  #13 KEYS: 1 sh @ ~335.00  (score=0.58, mom=0.58, ADX=12, RSI=59)  -- running 230d
+  #15 TRV: 1 sh @ ~374.62  (score=0.57, mom=1.05, ADX=17, RSI=57)  -- running 167d
+  #17 MET: 4 sh @ ~97.04  (score=0.54, mom=0.88, ADX=11, RSI=52)  -- running 110d  [RSI near filter floor]
+  #18 ABBV: 1 sh @ ~263.96  (score=0.52, mom=0.59, ADX=18, RSI=62)  -- running 85d, near 52w high
+  #20 HPQ: 3 sh @ ~34.40  (score=0.49, mom=0.85, ADX=31, RSI=65)  -- established  [ADX near filter ceiling]
+  -> total cost if all filled: $8,878.53 (88.8% of $10,000.00 capital)
 
-WATCHLIST -- not a signal, just building (77):
+CANDIDATES (23) -- confirmed & filter-passing, ranked by score, but didn't make the cut today (portfolio full at 15 positions, or insufficient remaining cash):
+  #1 SNDK: 0 sh @ ~1791.82 if a slot/cash frees up  (score=0.90, mom=3.62, ADX=12, RSI=68)  -- running 326d  [would size to 0 sh at current remaining cash]
+  #9 LITE: 0 sh @ ~930.91 if a slot/cash frees up  (score=0.63, mom=1.19, ADX=10, RSI=53)  -- established  [RSI near filter floor; would size to 0 sh at current remaining cash]
+  #14 TER: 0 sh @ ~371.47 if a slot/cash frees up  (score=0.58, mom=0.62, ADX=10, RSI=54)  -- running 287d  [RSI near filter floor; would size to 0 sh at current remaining cash]
+  #16 CRWD: 0 sh @ ~237.65 if a slot/cash frees up  (score=0.54, mom=1.22, ADX=21, RSI=59)  -- running 105d  [would size to 0 sh at current remaining cash]
+  #19 VRSN: 0 sh @ ~303.12 if a slot/cash frees up  (score=0.52, mom=0.54, ADX=18, RSI=63)  -- established  [would size to 0 sh at current remaining cash]
+  #21 FTNT: 0 sh @ ~169.84 if a slot/cash frees up  (score=0.47, mom=1.36, ADX=22, RSI=54)  -- running 102d, near 52w high  [RSI near filter floor]
+  #22 TMO: 0 sh @ ~651.45 if a slot/cash frees up  (score=0.47, mom=0.96, ADX=33, RSI=62)  -- established, near 52w high  [ADX near filter ceiling]
+  #23 NVDA: 0 sh @ ~222.27 if a slot/cash frees up  (score=0.47, mom=0.40, ADX=13, RSI=55)  -- established  [RSI near filter floor]
+  #24 SWKS: 0 sh @ ~88.76 if a slot/cash frees up  (score=0.47, mom=0.56, ADX=30, RSI=71)  -- established
+  #25 ADI: 0 sh @ ~375.72 if a slot/cash frees up  (score=0.46, mom=0.33, ADX=15, RSI=61)  -- running 206d
+  #26 CB: 1 sh @ ~340.64 if a slot/cash frees up  (score=0.42, mom=0.45, ADX=12, RSI=53)  -- running 219d  [RSI near filter floor]
+  #27 ANET: 0 sh @ ~199.39 if a slot/cash frees up  (score=0.41, mom=0.58, ADX=15, RSI=53)  -- running 115d  [RSI near filter floor]
+  #28 QCOM: 0 sh @ ~177.72 if a slot/cash frees up  (score=0.41, mom=0.35, ADX=23, RSI=63)  -- early
+  #29 UHS: 1 sh @ ~176.69 if a slot/cash frees up  (score=0.39, mom=0.20, ADX=15, RSI=58)  -- just started, well off highs
+  #30 HUM: 0 sh @ ~386.22 if a slot/cash frees up  (score=0.37, mom=1.05, ADX=21, RSI=50)  -- running 100d  [RSI near filter floor]
+  #31 WRB: 4 sh @ ~69.99 if a slot/cash frees up  (score=0.37, mom=0.11, ADX=17, RSI=61)  -- early
+  #32 WAT: 0 sh @ ~421.63 if a slot/cash frees up  (score=0.36, mom=0.79, ADX=25, RSI=55)  -- running 84d
+  #33 GLW: 0 sh @ ~150.13 if a slot/cash frees up  (score=0.35, mom=0.25, ADX=11, RSI=51)  -- just started  [RSI near filter floor]
+  #34 IQV: 0 sh @ ~266.42 if a slot/cash frees up  (score=0.34, mom=1.01, ADX=34, RSI=55)  -- established, near 52w high  [ADX near filter ceiling; RSI near filter floor]
+  #35 TXN: 0 sh @ ~266.64 if a slot/cash frees up  (score=0.34, mom=0.31, ADX=18, RSI=58)  -- running 119d
+  #36 SMCI: 2 sh @ ~39.09 if a slot/cash frees up  (score=0.21, mom=0.26, ADX=24, RSI=55)  -- established  [RSI near filter floor]
+  #37 DVA: 1 sh @ ~183.86 if a slot/cash frees up  (score=0.18, mom=0.26, ADX=23, RSI=54)  -- early  [RSI near filter floor]
+  #38 MDT: 2 sh @ ~92.13 if a slot/cash frees up  (score=0.13, mom=0.19, ADX=29, RSI=54)  -- established  [RSI near filter floor]
+
+WATCHLIST -- not a signal, just building (121):
   A: momentum positive, volume not confirming yet
-  ACGL: confirmed but filtered (weak/late setup)
-  ADI: confirmed but filtered (weak/late setup)
+  ACGL: momentum positive, volume not confirming yet
+  ACN: confirmed but filtered (weak/late setup)
   AFL: momentum positive, volume not confirming yet
   AIG: confirmed but filtered (weak/late setup)
   AIZ: confirmed but filtered (weak/late setup)
   AJG: momentum positive, volume not confirming yet
+  AKAM: confirmed but filtered (weak/late setup)
   ALL: momentum positive, volume not confirming yet
   AMAT: momentum positive, volume not confirming yet
   AMGN: momentum positive, volume not confirming yet
-  AMP: momentum positive, volume not confirming yet
-  ANET: confirmed but filtered (weak/late setup)
+  AMP: confirmed but filtered (weak/late setup)
   APH: confirmed but filtered (weak/late setup)
   BAC: momentum positive, volume not confirming yet
   BAX: momentum positive, volume not confirming yet
-  ...+62 more
+  ...+106 more (full list in live/tsm_live_2026-09-19.csv)
+
+Full untruncated data (all sections): live/tsm_live_2026-09-19.csv

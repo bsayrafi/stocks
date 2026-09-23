@@ -13,6 +13,8 @@ from tqdm import tqdm
 from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from boxfilters import run_pipeline
+from intraday_strategy import * 
 
 
 # 1. Create the session
@@ -92,6 +94,8 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
     ENABLE_NEWS_SENTIMENT=1, so the model is loaded once, not per ticker.
     """
     results2 = []
+    spy_df = fetch_intraday("SPY")
+    sector_cache: dict[str, pd.DataFrame] = {}
 
     for symbol in sp500_tickers:
         try:
@@ -417,10 +421,51 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                 # QualityScore and QualityDipBuy are NOT set here — computed after the
                 # full batch runs, once sector-relative valuation is available.
 
+            box_result = run_pipeline(df)
+            box_row = box_result.iloc[-1]  # latest bar's readout
+
+            box_block = {
+                "Box_Liquidity_OK": box_row["LIQUIDITY_OK"],
+                "Box_Trend_OK": box_row["TREND_OK"],
+                "Box_Not_Choppy": box_row["NOT_CHOPPY"],
+                "Box_Chop_Value": round(box_row["CHOP_VALUE"], 1) if pd.notna(box_row["CHOP_VALUE"]) else None,
+                "Box_VolContraction_OK": box_row["VOL_CONTRACTION_OK"],
+                "Box_Top": round(box_row["BOX_TOP"], 2) if pd.notna(box_row["BOX_TOP"]) else None,
+                "Box_Bottom": round(box_row["BOX_BOTTOM"], 2) if pd.notna(box_row["BOX_BOTTOM"]) else None,
+                "Box_Height_ATR": round(box_row["BOX_HEIGHT_ATR"], 2) if pd.notna(box_row["BOX_HEIGHT_ATR"]) else None,
+                "Box_Top_Touches": box_row["TOP_TOUCHES"],
+                "Box_Bottom_Touches": box_row["BOTTOM_TOUCHES"],
+                "Box_Valid": box_row["BOX_VALID"],
+                "Box_Breakout_Confirmed": box_row["BREAKOUT_CONFIRMED"],
+                "Box_Signal": box_row["SIGNAL"],
+                "Box_Avg_Volume_50D": round(box_row["AVG_VOLUME_50D"], 0) if pd.notna(box_row["AVG_VOLUME_50D"]) else None,
+                "Box_Required_Volume": round(box_row["REQUIRED_BREAKOUT_VOLUME"], 0) if pd.notna(box_row["REQUIRED_BREAKOUT_VOLUME"]) else None,
+                "Box_Pct_To_Top": round(box_row["PCT_TO_BOX_TOP"], 2) if pd.notna(box_row["PCT_TO_BOX_TOP"]) else None,
+                "Box_Pct_Above_Bottom": round(box_row["PCT_ABOVE_BOX_BOTTOM"], 2) if pd.notna(box_row["PCT_ABOVE_BOX_BOTTOM"]) else None,
+            }
+            
 
             valuation_block = {}
             if CONFIG["ENABLE_VALUATION"] == 1:
                 valuation_block = get_valuation_metrics(symbol, ticker=yf_ticker)
+
+
+            intraday_block = {} 
+            if CONFIG["ENABLE_INTRADAY"] == 1:
+
+                sector = company_block["Sector"]   # however your screener stores it
+                etf = SECTOR_TO_ETF.get(sector)
+                if etf and etf not in sector_cache:
+                    sector_cache[etf] = fetch_intraday(etf)
+
+                intraday_block = analyze_intraday(
+                            symbol,
+                            sector=sector,
+                            spy_df=spy_df,
+                            sector_df=sector_cache.get(etf),
+                            daily_df=df,
+                )
+
 
             if passes_gap_filter:
                 aboveSMA = 1 if days[DAYm1_IDX]['SMA50'] < days[DAYm1_IDX]['Close'] else 0
@@ -473,7 +518,10 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                     **sig,
                     **cash_block,
                     **valuation_block,
+                    **box_block,
+                    **intraday_block,
                     **dip_block, 
+
                 })
         except Exception as e:
             if verbose_errors:

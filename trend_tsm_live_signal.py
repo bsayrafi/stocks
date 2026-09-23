@@ -42,7 +42,11 @@ actual broker positions yourself.
 
 EACH RUN SENDS ONE DIGEST PUSH (via ntfy.sh, not one push per symbol) with up to
 four sections:
-  - CONFIRMED ENTRIES   -- signal fired and passed the ADX/RSI entry filter
+  - CONFIRMED ENTRIES   -- signal fired and passed the ADX/RSI entry filter,
+                            and a shadow-portfolio slot was free to take it
+  - CANDIDATES          -- signal fired and passed the ADX/RSI entry filter,
+                            but the shadow portfolio was full (MAX_POSITIONS) --
+                            these would have been entries with a free slot
   - CONFIRMED EXITS     -- a held position's trend just flipped off
   - WATCHLIST           -- momentum turned positive but not yet confirmed, or
                             confirmed but filtered out (weak/late setup) --
@@ -132,6 +136,111 @@ def send_ntfy(topic, title, message, priority="default"):
         print(f"ntfy push failed ({e}) -- digest was:\n{title}\n{message}")
 
 
+def entry_quality_notes(adx, rsi14, sim_cfg):
+    """Short, descriptive feedback tags about how close an entry sits to the
+    configured entry-filter edges. Purely informational (like trend_maturity's
+    stage label) -- these thresholds are derived directly from the filter
+    itself (75% of the ADX ceiling, 5 RSI points above the exclusion floor),
+    not independently validated cutoffs, so they explain the signal rather
+    than gate it."""
+    notes = []
+    max_adx = sim_cfg.get("ENTRY_MAX_ADX")
+    if max_adx and pd.notna(adx) and adx >= 0.75 * max_adx:
+        notes.append("ADX near filter ceiling")
+    rsi_range = sim_cfg.get("ENTRY_RSI_EXCLUDE_RANGE")
+    if rsi_range and pd.notna(rsi14) and rsi14 < rsi_range[1] + 5:
+        notes.append("RSI near filter floor")
+    return notes
+
+
+def export_full_digest_csv(today_str, entries, exits, risk_flags, watchlist, candidates, export_dir="live"):
+    """Write every entry/candidate/exit/risk-flag/watchlist row -- untruncated --
+    to a dated CSV, in the same directory as the log/state files. The console/
+    ntfy digest below trims the watchlist for readability in a push
+    notification; this file never does, so it's the source of truth for
+    anything downstream (e.g. an Excel export)."""
+    os.makedirs(export_dir, exist_ok=True)
+    rows = []
+    for e in entries:
+        rows.append({
+            "section": "confirmed_entry", "symbol": e["symbol"], "price": e.get("price"),
+            "shares": e.get("shares"), "composite_momentum": e.get("composite_momentum"),
+            "adx": e.get("adx"), "rsi14": e.get("rsi14"), "stage": e.get("stage"),
+            "quality_notes": "; ".join(e.get("quality_notes", [])), "reason": "", "entry_date": "",
+            "unrealized_pct": "", "as_of": e.get("as_of"), "score": e.get("score"), "rank": e.get("rank"),
+        })
+    for c in candidates:
+        rows.append({
+            "section": "candidate", "symbol": c["symbol"], "price": c.get("price"),
+            "shares": c.get("shares"), "composite_momentum": c.get("composite_momentum"),
+            "adx": c.get("adx"), "rsi14": c.get("rsi14"), "stage": c.get("stage"),
+            "quality_notes": "; ".join(c.get("quality_notes", [])), "reason": c.get("reason"),
+            "entry_date": "", "unrealized_pct": "", "as_of": c.get("as_of"), "score": c.get("score"), "rank": c.get("rank"),
+        })
+    for x in exits:
+        rows.append({
+            "section": "confirmed_exit", "symbol": x["symbol"], "price": x.get("last_close"),
+            "shares": "", "composite_momentum": "", "adx": "", "rsi14": "", "stage": "",
+            "quality_notes": "", "reason": "", "entry_date": x.get("entry_date"),
+            "unrealized_pct": x.get("unrealized_pct"), "as_of": x.get("as_of"), "score": "", "rank": "",
+        })
+    for r in risk_flags:
+        rows.append({
+            "section": "risk_flag", "symbol": r["symbol"], "price": "", "shares": "",
+            "composite_momentum": "", "adx": "", "rsi14": "", "stage": "", "quality_notes": "",
+            "reason": "trend still confirmed, exit rule unchanged", "entry_date": r.get("entry_date"),
+            "unrealized_pct": r.get("unrealized_pct"), "as_of": r.get("as_of"), "score": "", "rank": "",
+        })
+    for w in watchlist:
+        rows.append({
+            "section": "watchlist", "symbol": w["symbol"], "price": "", "shares": "",
+            "composite_momentum": w.get("composite_momentum"), "adx": w.get("adx"),
+            "rsi14": w.get("rsi14"), "stage": "", "quality_notes": "", "reason": w.get("reason"),
+            "entry_date": "", "unrealized_pct": "", "as_of": w.get("as_of"), "score": "", "rank": "",
+        })
+    path = os.path.join(export_dir, f"tsm_live_{today_str}.csv")
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def score_slot_seekers(seekers):
+    """Attach a 0-1 composite score to every confirmed & filter-passing signal
+    from today's run (mutates seekers in place), so scarce slots and the day's
+    remaining cash go to the best-looking setups first instead of whichever
+    ticker happens to sort first alphabetically.
+
+    CAVEAT -- read before trusting this too much: the per-trade analysis in
+    trend_tsm_backtest.py already tested whether composite_momentum (or the
+    other available indicators) can rank *which* confirmed trade will turn out
+    more profitable, and found none of them do. This score does not overturn
+    that finding -- it's a principled tiebreaker for capital allocation
+    ("something beats alphabetical order"), not a validated way to pick
+    winners. Don't expect it to raise returns on its own; it just replaces an
+    arbitrary rule with a documented one.
+
+    Method: percentile-rank each factor across today's pool (0..1) and average
+    the three, equally weighted:
+      - momentum : higher composite_momentum ranks higher (the core signal).
+      - ADX      : LOWER ranks higher -- mirrors why ENTRY_MAX_ADX exists at
+                   all (an overextended, high-ADX entry hurt returns in
+                   backtest), so a fresher trend outranks a more forceful one
+                   even when both clear the same ceiling.
+      - RSI      : higher ranks higher -- mirrors why excluding RSI<50
+                   improved returns, i.e. more relative strength (within the
+                   passing range) outranks less.
+    """
+    if not seekers:
+        return
+    df = pd.DataFrame(seekers)
+    mom = pd.to_numeric(df["composite_momentum"], errors="coerce")
+    adx = pd.to_numeric(df["adx"], errors="coerce")
+    rsi = pd.to_numeric(df["rsi14"], errors="coerce")
+    ranks = pd.concat([mom.rank(pct=True), (-adx).rank(pct=True), rsi.rank(pct=True)], axis=1)
+    scores = ranks.mean(axis=1, skipna=True).fillna(0.5)
+    for seeker, s in zip(seekers, scores):
+        seeker["score"] = round(float(s), 3)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sectors", nargs="*", default=BASE_CONFIG["SECTORS"])
@@ -171,7 +280,8 @@ def main():
     universe |= held_symbols  # always re-evaluate anything currently held, even if it left the sector list
     print(f"Live universe: {len(universe)} symbols ({len(held_symbols)} currently held)")
 
-    entries, exits, watchlist, risk_flags = [], [], [], []
+    entries, exits, watchlist, risk_flags, candidates = [], [], [], [], []
+    slot_seekers = []  # confirmed & filter-passing -- not yet assigned a slot/cash
     today_str = datetime.now(timezone.utc).date().isoformat()
 
     for symbol in sorted(universe):
@@ -201,28 +311,19 @@ def main():
                     })
             continue
 
-        if len(state["positions"]) >= sim_cfg["MAX_POSITIONS"]:
-            continue  # shadow portfolio is full -- still worth seeing signals below? kept simple: skip new entries when full, same as the backtest
-
         passes_filter = passes_entry_filters(last, sim_cfg)
         atr = last.get("atr")
         if confirmed and passes_filter and pd.notna(atr) and atr > 0:
-            dollar_risk = state["cash"] * sim_cfg["RISK_PCT_PER_TRADE"]
-            shares = int(dollar_risk / (sim_cfg["SIZING_ATR_MULT"] * atr))
-            cost_basis = shares * last["close"]
-            if shares > 0 and cost_basis <= state["cash"]:
-                state["positions"][symbol] = {
-                    "shares": shares, "entry_price": float(last["close"]),
-                    "entry_date": today_str, "atr_at_entry": float(atr),
-                    "entry_stage": describe_stage(last.get("days_above_ema200"), last.get("pct_in_252d_range")),
-                }
-                state["cash"] -= cost_basis
-                entries.append({
-                    "symbol": symbol, "price": last["close"], "shares": shares,
-                    "composite_momentum": last.get("composite_momentum"), "adx": last.get("adx"),
-                    "rsi14": last.get("rsi14"), "as_of": last_date,
-                    "stage": describe_stage(last.get("days_above_ema200"), last.get("pct_in_252d_range")),
-                })
+            # Defer the slot/cash decision until every symbol has been seen and
+            # scored (see score_slot_seekers below) -- alphabetical iteration
+            # order should never decide who gets a scarce slot or the day's
+            # remaining cash.
+            slot_seekers.append({
+                "symbol": symbol, "price": last["close"], "atr": float(atr),
+                "composite_momentum": last.get("composite_momentum"), "adx": last.get("adx"),
+                "rsi14": last.get("rsi14"), "as_of": last_date,
+                "stage": describe_stage(last.get("days_above_ema200"), last.get("pct_in_252d_range")),
+            })
         elif confirmed and not passes_filter:
             watchlist.append({
                 "symbol": symbol, "reason": "confirmed but filtered (weak/late setup)",
@@ -234,15 +335,71 @@ def main():
                 "composite_momentum": last.get("composite_momentum"), "as_of": last_date,
             })
 
+    # -- score every confirmed & filter-passing signal, then allocate slots/cash
+    # in score order (best first) instead of alphabetical order. --------------
+    score_slot_seekers(slot_seekers)
+    slot_seekers.sort(key=lambda s: s["score"], reverse=True)
+    for rank, seeker in enumerate(slot_seekers, start=1):
+        portfolio_full = len(state["positions"]) >= sim_cfg["MAX_POSITIONS"]
+        dollar_risk = state["cash"] * sim_cfg["RISK_PCT_PER_TRADE"]
+        hyp_shares = int(dollar_risk / (sim_cfg["SIZING_ATR_MULT"] * seeker["atr"]))
+        cost_basis = hyp_shares * seeker["price"]
+        quality_notes = entry_quality_notes(seeker["adx"], seeker["rsi14"], sim_cfg)
+
+        if not portfolio_full and hyp_shares > 0 and cost_basis <= state["cash"]:
+            state["positions"][seeker["symbol"]] = {
+                "shares": hyp_shares, "entry_price": float(seeker["price"]),
+                "entry_date": today_str, "atr_at_entry": seeker["atr"],
+                "entry_stage": seeker["stage"],
+            }
+            state["cash"] -= cost_basis
+            entries.append({
+                "symbol": seeker["symbol"], "price": seeker["price"], "shares": hyp_shares,
+                "composite_momentum": seeker["composite_momentum"], "adx": seeker["adx"],
+                "rsi14": seeker["rsi14"], "as_of": seeker["as_of"], "stage": seeker["stage"],
+                "quality_notes": quality_notes, "score": seeker["score"], "rank": rank,
+            })
+        else:
+            if portfolio_full:
+                reason = "confirmed & passes filter, but no free slot (portfolio full)"
+            else:
+                reason = "confirmed & passes filter, slot available but insufficient remaining cash"
+                quality_notes.append("would size to 0 sh at current remaining cash" if hyp_shares == 0
+                                      else "cost exceeds remaining cash")
+            candidates.append({
+                "symbol": seeker["symbol"], "price": seeker["price"], "shares": hyp_shares,
+                "composite_momentum": seeker["composite_momentum"], "adx": seeker["adx"],
+                "rsi14": seeker["rsi14"], "as_of": seeker["as_of"], "stage": seeker["stage"],
+                "quality_notes": quality_notes, "reason": reason, "score": seeker["score"], "rank": rank,
+            })
+
     state["last_run_date"] = today_str
     save_state(state, args.state_path)
+    export_path = export_full_digest_csv(today_str, entries, exits, risk_flags, watchlist, candidates)
 
     lines = [f"TSM daily signal -- {today_str}"]
     if entries:
-        lines.append(f"\nCONFIRMED ENTRIES ({len(entries)}) -- buy at next open:")
+        lines.append(f"\nCONFIRMED ENTRIES ({len(entries)}) -- ranked by score, buy at next open:")
         for e in entries:
-            lines.append(f"  {e['symbol']}: {e['shares']} sh @ ~{e['price']:.2f}  "
-                         f"(mom={e['composite_momentum']:.2f}, ADX={e['adx']:.0f}, RSI={e['rsi14']:.0f})  -- {e['stage']}")
+            note_suffix = f"  [{'; '.join(e['quality_notes'])}]" if e.get("quality_notes") else ""
+            lines.append(f"  #{e['rank']} {e['symbol']}: {e['shares']} sh @ ~{e['price']:.2f}  "
+                         f"(score={e['score']:.2f}, mom={e['composite_momentum']:.2f}, ADX={e['adx']:.0f}, RSI={e['rsi14']:.0f})  -- {e['stage']}{note_suffix}")
+        total_cost = sum(e['shares'] * e['price'] for e in entries)
+        pct_of_capital = total_cost / args.capital if args.capital else 0.0
+        lines.append(f"  -> total cost if all filled: ${total_cost:,.2f} "
+                     f"({pct_of_capital:.1%} of ${args.capital:,.2f} capital)")
+        below_200d = [e['symbol'] for e in entries if 'below its 200d avg' in e['stage']]
+        if below_200d:
+            lines.append(f"  -> below 200d avg despite confirmed signal (lower conviction): {', '.join(below_200d)}")
+    if candidates:
+        lines.append(f"\nCANDIDATES ({len(candidates)}) -- confirmed & filter-passing, ranked by score, "
+                     f"but didn't make the cut today (portfolio full at {sim_cfg['MAX_POSITIONS']} positions, "
+                     f"or insufficient remaining cash):")
+        for c in candidates:
+            note_suffix = f"  [{'; '.join(c['quality_notes'])}]" if c.get("quality_notes") else ""
+            lines.append(f"  #{c['rank']} {c['symbol']}: {c['shares']} sh @ ~{c['price']:.2f} if a slot/cash frees up  "
+                         f"(score={c['score']:.2f}, mom={c['composite_momentum']:.2f}, ADX={c['adx']:.0f}, RSI={c['rsi14']:.0f})  "
+                         f"-- {c['stage']}{note_suffix}")
     if exits:
         lines.append(f"\nCONFIRMED EXITS ({len(exits)}) -- sell at next open:")
         for x in exits:
@@ -258,12 +415,13 @@ def main():
         for w in watchlist[:15]:
             lines.append(f"  {w['symbol']}: {w['reason']}")
         if len(watchlist) > 15:
-            lines.append(f"  ...+{len(watchlist)-15} more")
-    if not (entries or exits or risk_flags or watchlist):
+            lines.append(f"  ...+{len(watchlist)-15} more (full list in {export_path})")
+    if not (entries or candidates or exits or risk_flags or watchlist):
         lines.append("\nNothing to report -- no new signals, no held positions crossed a flag.")
+    lines.append(f"\nFull untruncated data (all sections): {export_path}")
 
     message = "\n".join(lines)
-    title = f"TSM: {len(entries)} entry / {len(exits)} exit / {len(risk_flags)} risk flag"
+    title = f"TSM: {len(entries)} entry / {len(candidates)} candidate / {len(exits)} exit / {len(risk_flags)} risk flag"
     priority = "high" if (entries or exits) else "default"
     send_ntfy(args.ntfy_topic, title, message, priority)
     print(message)

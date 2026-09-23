@@ -32,8 +32,9 @@ from event_catalysts import *
 # 2. Securely load API Token
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
+constants.CONFIG["ENABLE_INTRADAY"] = 1
 
-constants.CONFIG["SHOW_PREMARKET_PRICE"] = 0
+constants.CONFIG["SHOW_PREMARKET_PRICE"] = 1
 constants.CONFIG["ENABLE_COMPANY_INFO"] = 1
 constants.CONFIG["ENABLE_ANALYST_DATA"] = 1
 constants.CONFIG["ENABLE_SHORT_INTEREST"] = 1
@@ -76,8 +77,8 @@ def loadData(num, force_redownload=False):
           'Forward P/E': 'Profitable (>0)',
           #'Current Ratio': 'Over 0.5',
           #'Quick Ratio': 'Over 0.5',
-          'PEG': 'Under 3',
-          'EPS growthqtr over qtr': 'Positive (>0%)',
+          #'PEG': 'Under 3',
+          #'EPS growthqtr over qtr': 'Positive (>0%)',
           #'EPS growth ttm': 'Positive (>0%)',
           #'InstitutionalOwnership': 'Over 20%',
 
@@ -99,6 +100,7 @@ def     setEnable(num):
     constants.CONFIG["ENABLE_RAW_STATEMENTS"] = num
     constants.CONFIG["ENABLE_ALTMAN_ZSCORE"] = num
     constants.CONFIG["ENABLE_CMF"] = num
+    constants.CONFIG["ENABLE_INTRADAY"] = num
     constants.CONFIG["ENABLE_DIP_STRATEGY"] = num
     constants.CONFIG["ENABLE_VALUATION"] = num
     constants.CONFIG["ENABLE_SHORT_INTEREST"] = num
@@ -195,7 +197,7 @@ def runCoreScreener(num=2, force_redownload=True) :
   # 0 small
 setEnable(1)
 #runCoreScreener(num=0, force_redownload=True)
-runCoreScreener(num=2, force_redownload=True)
+runCoreScreener(num=0, force_redownload=True)
 setEnable(0)
 
 
