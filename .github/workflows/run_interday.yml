@@ -1,0 +1,48 @@
+name: Run Interday
+
+# This allows you to run it manually with a button click
+on: 
+  workflow_dispatch: 
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Download your repository files (including your custom .py files)
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3: Install required libraries
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas openpyxl yfinance pyarrow tradingview-ta finvizfinance fundamentalanalysis tqdm
+
+      # Step 4: Run your cleaned Python script
+      - name: Run Core Script
+        env:
+          # Injects the secret we created earlier!
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        # IMPORTANT: Make sure this matches the exact name of your main script file
+        
+        run: |
+          mkdir -p reports
+          mkdir -p data
+          python run_interday_vwap.py
+
+      # Step 5: Save the generated Excel files as Artifacts
+      - name: Upload Excel Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: Core-Results
+          path: |
+            data/*.xlsx
+            reports/*.html
+          retention-days: 1
