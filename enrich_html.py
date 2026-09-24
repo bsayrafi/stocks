@@ -34,6 +34,11 @@ import numpy as np
 import html
 import os
 import requests
+import datetime as dt
+try:
+    import finnhub  # pip install finnhub-python
+except ImportError:
+    finnhub = None
 import constants
 from datetime import datetime, timedelta, timezone
 from event_catalysts import *
@@ -107,10 +112,13 @@ CONFIGH = {
     "ALPACA_FEED": "sip",          # "sip" = all exchanges; "iex" = live but IEX-only
     "ALPACA_SIP_DELAY_MIN": 16,    # free plan: SIP must be >=15 min old; 0 if you pay for live SIP
     "ALPACA_HEADERS": None,        # or {"APCA-API-KEY-ID": "...", "APCA-API-SECRET-KEY": "..."}
-    "ALPACA_HEADERS": {
-        "APCA-API-KEY-ID": "PKGT4VDNU6I3UJVRNUFYT34PK2",        # your API key
-        "APCA-API-SECRET-KEY": "E9zQAKbXS5ATHJ399iqPGq5GaYqdKQq6DQDjcKrQQQDx", # your secret
-    },
+
+    # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
+    # Key: here, or the FINNHUB_API_KEY environment variable.
+    "FINNHUB_API_KEY": "dafflm1r01quvmmfau5gdafflm1r01quvmmfau60",
+    "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
+    "NEWS_MAX": 50,                # max articles shown per ticker (newest first)
+    "NEWS_TZ": "America/New_York", # time zone for the article times shown
 }
 
 
@@ -431,6 +439,36 @@ def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "
     if with_time:
         return price, pd.Timestamp(bars[-1]["t"]).tz_convert(tz).strftime("%H:%M")
     return price
+
+
+def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
+                       max_items: int = 25, tz: str = "America/New_York") -> list:
+    """Company news from Finnhub for today (and the previous `days` days).
+    Returns a list of {"time": "YYYY-MM-DD HH:MM", "headline": str, "url": str},
+    newest first, duplicates (same headline) removed. Returns [] if the
+    finnhub package or API key is missing, or on any API/network error."""
+    api_key = api_key or os.environ.get("FINNHUB_API_KEY")
+    if finnhub is None or not api_key:
+        return []
+    today = dt.date.today()
+    try:
+        client = finnhub.Client(api_key=api_key)
+        news = client.company_news(ticker, _from=str(today - dt.timedelta(days=days)), to=str(today)) or []
+    except Exception as e:
+        print(f"  [{ticker}] news unavailable: {e}")
+        return []
+
+    items, seen = [], set()
+    for n in sorted(news, key=lambda n: n.get("datetime", 0), reverse=True):
+        headline, url = (n.get("headline") or "").strip(), (n.get("url") or "").strip()
+        if not headline or headline in seen:
+            continue
+        seen.add(headline)
+        when = pd.Timestamp(n.get("datetime", 0), unit="s", tz="UTC").tz_convert(tz)
+        items.append({"time": when.strftime("%Y-%m-%d %H:%M"), "headline": headline, "url": url})
+        if len(items) >= max_items:
+            break
+    return items
 
 
 def linear_regression_channel(df: pd.DataFrame, length, dev: float, source: str = "Close") -> dict | None:
@@ -787,6 +825,9 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     analyst = fetch_analyst_data(cfg["TICKER"])
     #catalysts = catalyst_snapshot(cfg["TICKER"], sp500_members=sp500_members)
     catalysts = get_event_catalysts(cfg["TICKER"], sp500_members=sp500_members).to_dict()
+    news = fetch_company_news(cfg["TICKER"], api_key=cfg.get("FINNHUB_API_KEY"),
+                              days=cfg.get("NEWS_DAYS", 0), max_items=cfg.get("NEWS_MAX", 25),
+                              tz=cfg.get("NEWS_TZ", "America/New_York"))
 
     return {
         "ticker": cfg["TICKER"],
@@ -813,6 +854,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "trend_dir": trend_dir,
         "pre_market": pre_market,
         "pre_market_time": pre_market_time,
+        "news": news,
     }
 
 
@@ -1302,8 +1344,34 @@ def render_ticker_html(report: dict) -> str:
             + "\n\n      <h3>EPS Estimate Revisions (current quarter)</h3>" + _four_col_table(eps_items)
         )
 
+    news = report.get("news") or []
+    if news:
+        tz_lbl = {"America/New_York": "ET", "Asia/Jerusalem": "IL", "UTC": "UTC"}.get(
+            cfg.get("NEWS_TZ", "America/New_York"), "")
+        li = ""
+        for n in news:
+            url = n["url"] if n["url"].lower().startswith(("http://", "https://")) else ""
+            title = html.escape(n["headline"])
+            link = (f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{title}</a>'
+                    if url else title)
+            li += f'<li><span class="news-time">{html.escape(n["time"])} {tz_lbl}</span>{link}</li>'
+        plural = "s" if len(news) != 1 else ""
+        news_cell = (f'<details class="news-toggle"><summary>'
+                     f'<span class="when-closed">Show {len(news)} article{plural}</span>'
+                     f'<span class="when-open">Hide article{plural}</span></summary>'
+                     f'<ul class="news-list">{li}</ul></details>')
+    else:
+        news_cell = "none"
+    news_days = cfg.get("NEWS_DAYS", 0)
+    news_label = "today" if news_days == 0 else f"last {news_days + 1} days"
+    news_row = f"<tr><td>News ({len(news)}, {news_label})</td><td>{news_cell}</td></tr>"
+
     catalysts = report.get("catalysts") or {}
     catalysts_block = ""
+    if not catalysts and news:
+        catalysts_block = f"""
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>{news_row}</tbody></table>"""
     if catalysts:
         earnings_date = catalysts.get("next_earnings_date") or "N/A"
         days_to_earnings = catalysts.get("days_to_earnings")
@@ -1358,6 +1426,7 @@ def render_ticker_html(report: dict) -> str:
         <tr><td>Guidance headlines ({len(guidance_headlines)})</td><td>{guidance_html}</td></tr>
         <tr><td>Analyst actions ({catalysts.get('upgrades', 0)} up / {catalysts.get('downgrades', 0)} down)</td><td>{rating_html}</td></tr>
         <tr><td>Reddit Sentiment (ApeWisdom)</td><td>{social_html}</td></tr>
+        {news_row}
       </tbody></table>"""
 
 
@@ -1535,11 +1604,19 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .chart-toggle {{ margin: 0 0 12px; }}
   .chart-toggle summary {{ list-style: none; cursor: pointer; color: var(--accent);
                            font-size: 12px; display: inline-block; margin-bottom: 6px; user-select: none; }}
+  .news-toggle summary {{ cursor: pointer; color: var(--accent); user-select: none; }}
+  .news-toggle summary:hover {{ text-decoration: underline; }}
+  .news-list {{ list-style: none; margin: 8px 0 2px; padding: 0; }}
+  .news-list li {{ padding: 4px 0; border-bottom: 1px solid var(--border); line-height: 1.4; }}
+  .news-list li:last-child {{ border-bottom: none; }}
+  .news-time {{ color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 10px; white-space: nowrap; }}
+  .news-list a {{ color: var(--text); text-decoration: none; }}
+  .news-list a:hover {{ color: var(--accent); text-decoration: underline; }}
   .chart-toggle summary::-webkit-details-marker {{ display: none; }}
   .chart-toggle summary:hover {{ text-decoration: underline; }}
-  .chart-toggle .when-open {{ display: none; }}
-  .chart-toggle[open] .when-open {{ display: inline; }}
-  .chart-toggle[open] .when-closed {{ display: none; }}
+  .chart-toggle .when-open, .news-toggle .when-open {{ display: none; }}
+  .chart-toggle[open] .when-open, .news-toggle[open] .when-open {{ display: inline; }}
+  .chart-toggle[open] .when-closed, .news-toggle[open] .when-closed {{ display: none; }}
   .chart-head {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
                  color: var(--muted); font-size: 12px; margin-bottom: 6px; }}
   .chart-head .legend {{ margin-left: auto; display: flex; align-items: center; gap: 6px; }}

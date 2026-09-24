@@ -1,8 +1,8 @@
-import yfinance as yf, pandas as pd
+import finnhub, datetime as dt
+ticker = "AAPL"
+client = finnhub.Client(api_key="dafflm1r01quvmmfau5gdafflm1r01quvmmfau60")
+today = dt.date.today()
+news = client.company_news(ticker, _from=str(today - dt.timedelta(days=0)), to=str(today))
 
-for t in ["QTWO", "PGY", "CRWV"]:
-    df = yf.download(t, period="6mo", auto_adjust=True, progress=False)
-    print(t, df.shape, "MultiIndex" if isinstance(df.columns, pd.MultiIndex) else "flat")
-    print(df.columns.tolist()[:6])
-    print(df[["Close"]].tail(2) if not df.empty else "EMPTY")
-    print("-" * 40)
+for n in news:
+    print(dt.datetime.fromtimestamp(n["datetime"]), "|", n["headline"],"|", n["url"])
