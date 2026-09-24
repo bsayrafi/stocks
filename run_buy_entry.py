@@ -53,7 +53,7 @@ large_enrichment_tickers = [
 
 
 
-def run_enrichment(num, runtype):
+def run_enrichment(num, runtype="all"):
     enrichment_tickers = []
     if num==0:
         enrichment_tickers = small_enrichment_tickers
@@ -74,7 +74,7 @@ def run_enrichment(num, runtype):
     else:
         start = time.time()
         constants.set_pkl_path(num)
-        if runtype = "html":
+        if runtype == "html":
             enrich_html.main(enrichment_tickers, fileapp)
         else:
             enrich_html.main(enrichment_tickers, fileapp)
@@ -139,5 +139,6 @@ def run_enrichment(num, runtype):
 
 
 #num = 2
-run_enrichment(0, "html")
-run_enrichment(2, "html")
+runtype = "html"
+run_enrichment(0, runtype)
+run_enrichment(2, runtype)
