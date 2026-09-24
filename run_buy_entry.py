@@ -51,8 +51,6 @@ large_enrichment_tickers = [
 
 ]
 
-small_enrichment_tickers = [
-    "AAPL", "PGY", "RIGL", "ETON", ]
 
 def run_enrichment(num, runtype="all"):
     enrichment_tickers = []
@@ -142,4 +140,4 @@ def run_enrichment(num, runtype="all"):
 #num = 2
 runtype = "html"
 run_enrichment(0, runtype)
-#run_enrichment(2, runtype)
+run_enrichment(2, runtype)
