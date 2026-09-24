@@ -39,7 +39,7 @@ jobs:
 
       # Step 4.5: Generate the date (Day-Month)
       - name: Get current date
-        run: echo "DATE=$(date +'%H_%m_%d')" >> $GITHUB_ENV
+        run: echo "DATE=$(date +'%m_%d_%H')" >> $GITHUB_ENV
         
       # Step 5: Save the generated Excel files as Artifacts
       - name: Upload Excel Output
