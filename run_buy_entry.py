@@ -53,7 +53,7 @@ large_enrichment_tickers = [
 
 
 
-def run_enrichment(num):
+def run_enrichment(num, runtype):
     enrichment_tickers = []
     if num==0:
         enrichment_tickers = small_enrichment_tickers
@@ -74,67 +74,70 @@ def run_enrichment(num):
     else:
         start = time.time()
         constants.set_pkl_path(num)
-        enrich_html.main(enrichment_tickers, fileapp)
-    
-        #results2_entry = check_buy_zone_confirmation(enrichment_tickers)
-        all_df = results2_entry["all"]
-        elapsed = time.time() - start
-    
-        if not all_df.empty:
-            pd.set_option('display.max_columns', None)
-            pd.set_option('display.width', 1000)
-            
-            tz_gmt3 = timezone(timedelta(hours=3))
-            timestamp = constants.get_dayprefix() + "_" + constants.get_timeprefix()
-            txt = f"_buy_{timestamp}.xlsx"
-            csv_filename = constants.CONFIG["PKL_PATH"].replace(".pkl", txt)
-    
-            print(csv_filename)
-            status_colors = {
-                "1": "E2EFDA",  
-                "0": "FFF2F2",     
-            }
-            
-            excel_writer.export_df_with_row_colors(
-                df=all_df,
-                file_path=csv_filename,
-                target_col="Ticker",
-                sheet_name="Sheet1",
-                color_map=status_colors,
-                header_bg="1F4E78",    
-                header_text="FFFFFF",   
-            )
-    
-            # --- Intraday entry timing ---
-            confirmed_df = results2_entry["confirmed"]
-    
-            if not confirmed_df.empty:
-                intraday_results = []
-                for _, row in confirmed_df.iterrows():
-                    intraday_results.append(find_intraday_entry(row["Ticker"], entry_type=row["Entry_Type"]))
-                intraday_df = pd.DataFrame(intraday_results)
-    
-                print(intraday_df.to_string(index=False))
-    
-                intraday_filename = csv_filename.replace(".xlsx", "_intraday.xlsx")
+        if runtype = "html":
+            enrich_html.main(enrichment_tickers, fileapp)
+        else:
+            enrich_html.main(enrichment_tickers, fileapp)
+
+            results2_entry = check_buy_zone_confirmation(enrichment_tickers)
+            all_df = results2_entry["all"]
+            elapsed = time.time() - start
+        
+            if not all_df.empty:
+                pd.set_option('display.max_columns', None)
+                pd.set_option('display.width', 1000)
+                
+                tz_gmt3 = timezone(timedelta(hours=3))
+                timestamp = constants.get_dayprefix() + "_" + constants.get_timeprefix()
+                txt = f"_buy_{timestamp}.xlsx"
+                csv_filename = constants.CONFIG["PKL_PATH"].replace(".pkl", txt)
+        
+                print(csv_filename)
+                status_colors = {
+                    "1": "E2EFDA",  
+                    "0": "FFF2F2",     
+                }
+                
                 excel_writer.export_df_with_row_colors(
-                    df=intraday_df,
-                    file_path=intraday_filename,
+                    df=all_df,
+                    file_path=csv_filename,
                     target_col="Ticker",
                     sheet_name="Sheet1",
                     color_map=status_colors,
-                    header_bg="1F4E78",
-                    header_text="FFFFFF",
+                    header_bg="1F4E78",    
+                    header_text="FFFFFF",   
                 )
+        
+                # --- Intraday entry timing ---
+                confirmed_df = results2_entry["confirmed"]
+        
+                if not confirmed_df.empty:
+                    intraday_results = []
+                    for _, row in confirmed_df.iterrows():
+                        intraday_results.append(find_intraday_entry(row["Ticker"], entry_type=row["Entry_Type"]))
+                    intraday_df = pd.DataFrame(intraday_results)
+        
+                    print(intraday_df.to_string(index=False))
+        
+                    intraday_filename = csv_filename.replace(".xlsx", "_intraday.xlsx")
+                    excel_writer.export_df_with_row_colors(
+                        df=intraday_df,
+                        file_path=intraday_filename,
+                        target_col="Ticker",
+                        sheet_name="Sheet1",
+                        color_map=status_colors,
+                        header_bg="1F4E78",
+                        header_text="FFFFFF",
+                    )
+                else:
+                    print("No confirmed setups — skipping intraday check.")
             else:
-                print("No confirmed setups — skipping intraday check.")
-        else:
-            print("Error!")
+                print("Error!")
     
         print(f"BuyEntry run took {elapsed:.1f}s for {len(enrichment_tickers)} ticker(s) "
               f"({elapsed/max(len(enrichment_tickers),1):.2f}s/ticker)")
 
 
 #num = 2
-run_enrichment(0)
-run_enrichment(2)
+run_enrichment(0, "html")
+run_enrichment(2, "html")
