@@ -134,8 +134,8 @@ def run_enrichment(num, runtype="all"):
             else:
                 print("Error!")
     
-        print(f"BuyEntry run took {elapsed:.1f}s for {len(enrichment_tickers)} ticker(s) "
-              f"({elapsed/max(len(enrichment_tickers),1):.2f}s/ticker)")
+            print(f"BuyEntry run took {elapsed:.1f}s for {len(enrichment_tickers)} ticker(s) "
+                  f"({elapsed/max(len(enrichment_tickers),1):.2f}s/ticker)")
 
 
 #num = 2
