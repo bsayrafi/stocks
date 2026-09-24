@@ -91,6 +91,12 @@ CONFIGH = {
     "MARKET_TZ": "America/New_York",
     "MARKET_OPEN": "09:30",        # regular session, local to MARKET_TZ
     "MARKET_CLOSE": "16:00",
+
+    # Linear regression channel on the chart (display only, not part of the signal)
+    "LRC_ENABLED": True,
+    "LRC_LENGTH": None,            # bars to fit (1h bars); None = the whole chart window
+    "LRC_DEV": 2.0,                # channel half-width, in std devs of the residuals
+    "LRC_SOURCE": "Close",         # price column to fit: "Close", "High", "Low", "Open"
 }
 
 
@@ -342,6 +348,43 @@ def volume_poc(df: pd.DataFrame, bins: int = 50) -> float:
 
     k = int(profile.argmax())
     return round(float((edges[k] + edges[k + 1]) / 2), 2)
+
+
+def linear_regression_channel(df: pd.DataFrame, length, dev: float, source: str = "Close") -> dict | None:
+    """Least-squares line through the last `length` bars of `source` (x = bar
+    number, so overnight gaps don't bend it), with parallel bands at +/- `dev`
+    standard deviations of the residuals. Returns None if too few bars."""
+    src = df[source].dropna()
+    if length:
+        src = src.iloc[-int(length):]
+    n = len(src)
+    if n < 3:
+        return None
+    x = np.arange(n, dtype=float)
+    yv = src.to_numpy(dtype=float)
+    slope, intercept = np.polyfit(x, yv, 1)
+    fitted = intercept + slope * x
+    resid = yv - fitted
+    sd = float(resid.std())
+    ss_tot = float(((yv - yv.mean()) ** 2).sum())
+    r2 = 1 - float((resid ** 2).sum()) / ss_tot if ss_tot > 0 else 0.0
+
+    mid = pd.Series(fitted, index=src.index)
+    upper, lower = mid + dev * sd, mid - dev * sd
+    last_mid, last_up, last_lo = float(mid.iloc[-1]), float(upper.iloc[-1]), float(lower.iloc[-1])
+    last_px = float(df["Close"].iloc[-1])
+    width = last_up - last_lo
+    bars_per_day = n / max(len(pd.Index(src.index.date).unique()), 1)
+    return {
+        "mid": mid, "upper": upper, "lower": lower,
+        "bars": n, "dev": dev,
+        "slope_per_bar": float(slope),
+        "slope_pct_per_day": round(float(slope) * bars_per_day / last_mid * 100, 2) if last_mid else 0.0,
+        "r2": round(r2, 2),
+        "last_mid": round(last_mid, 2), "last_upper": round(last_up, 2), "last_lower": round(last_lo, 2),
+        # where the current price sits in the channel: 0% = lower band, 100% = upper band
+        "position_pct": round((last_px - last_lo) / width * 100, 0) if width > 0 else 50.0,
+    }
 
 
 def session_vwap(df: pd.DataFrame, tz: str, open_hhmm: str, close_hhmm: str) -> pd.Series:
@@ -636,6 +679,12 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
+    lrc = None
+    if cfg.get("LRC_ENABLED", True):
+        lrc = linear_regression_channel(chart["ohlcv"], cfg.get("LRC_LENGTH"),
+                                        cfg.get("LRC_DEV", 2.0), cfg.get("LRC_SOURCE", "Close"))
+    chart["lrc"] = lrc
+
     fundamentals = fetch_fundamentals(cfg["TICKER"])
     analyst = fetch_analyst_data(cfg["TICKER"])
     #catalysts = catalyst_snapshot(cfg["TICKER"], sp500_members=sp500_members)
@@ -648,6 +697,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "results": results,
         "sr_levels": sr_levels,
         "today_range": today_range,
+        "daily_atr": round(daily_atr_val, 2),
         "h1_macd_ok": h1_macd_ok,
         "vol_ok": vol_ok,
         "stop": stop,
@@ -661,6 +711,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "poc": poc,
         "vwap": vwap_now,
         "above_vwap": above_vwap,
+        "lrc": lrc,
     }
 
 
@@ -695,6 +746,11 @@ def print_report(report: dict) -> None:
     if report.get("vwap") is not None:
         side = "above" if report["above_vwap"] else "below"
         print(f"Session VWAP: {report['vwap']} (price {side} VWAP)")
+    lrc = report.get("lrc")
+    if lrc:
+        print(f"Regression channel ({lrc['bars']} bars, {lrc['dev']}σ): {lrc['last_lower']} / "
+              f"{lrc['last_mid']} / {lrc['last_upper']}  slope {lrc['slope_pct_per_day']:+.2f}%/day  "
+              f"R² {lrc['r2']}  price at {lrc['position_pct']:.0f}% of channel")
 
     print(f"\n1h MACD bullish: {report['h1_macd_ok']}")
     print(f"1h volume confirmed (>= {cfg['VOLUME_MULTIPLIER']}x {cfg['VOLUME_MA_PERIOD']}-period avg): {report['vol_ok']}")
@@ -872,6 +928,9 @@ def render_price_chart_svg(report: dict) -> str:
         overlays_clean_for_range = list(overlays_clean.values()) + [vwap_clean]
     else:
         overlays_clean_for_range = list(overlays_clean.values())
+    lrc = chart.get("lrc")
+    if lrc:
+        overlays_clean_for_range += [lrc["upper"], lrc["lower"]]
     candidates = [float(df["Low"].min()), float(df["High"].max())] + [v for _, v, _ in levels]
     for s in overlays_clean_for_range:
         if not s.empty:
@@ -947,6 +1006,18 @@ def render_price_chart_svg(report: dict) -> str:
     # ---- standard filled candles: green if close >= open, red otherwise
     color_cls = ["up" if c >= o else "down" for o, c in zip(df["Open"], df["Close"])]
 
+    # ---- linear regression channel (drawn behind candles)
+    if lrc:
+        pos_lrc = {ts: i for i, ts in enumerate(df.index)}
+        def _pts(series):
+            return [(x(pos_lrc[ts]), y(float(v))) for ts, v in series.items() if ts in pos_lrc]
+        up_pts, lo_pts, mid_pts = _pts(lrc["upper"]), _pts(lrc["lower"]), _pts(lrc["mid"])
+        if up_pts:
+            poly = " ".join(f"{a:.1f},{b:.1f}" for a, b in up_pts + lo_pts[::-1])
+            parts.append(f'<polygon class="lrc-fill" points="{poly}"/>')
+            for cls, pts in (("lrc-band", up_pts), ("lrc-band", lo_pts), ("lrc-mid", mid_pts)):
+                parts.append(f'<polyline class="{cls}" points="{" ".join(f"{a:.1f},{b:.1f}" for a, b in pts)}"/>')
+
     # ---- volume bars
     for i, (_, row) in enumerate(df.iterrows()):
         cls = color_cls[i]
@@ -1006,6 +1077,7 @@ def render_price_chart_svg(report: dict) -> str:
     last_c = float(df["Close"].iloc[-1])
     parts.append(f'<circle class="last" cx="{x(n - 1):.1f}" cy="{y(last_c):.1f}" r="3"/>')
 
+    lrc_legend = ' <i class="sw lrc-sw"></i>Reg. channel' if lrc else ""
     first_o = float(df["Open"].iloc[0])
     chg = (last_c / first_o - 1) * 100 if first_o else 0.0
     chg_cls = "pass" if chg >= 0 else "fail"
@@ -1020,7 +1092,7 @@ def render_price_chart_svg(report: dict) -> str:
           <span class="legend">{' '.join(legend_mas)}
             <i class="sw lvl-poc"></i>POC <i class="sw lvl-support"></i>1h support
             <i class="sw lvl-stop"></i>Stop <i class="sw lvl-target"></i>Target
-            <i class="sw session-sw"></i>Open/close</span>
+            <i class="sw session-sw"></i>Open/close{lrc_legend}</span>
         </div>
         <svg class="price-chart" viewBox="0 0 {W} {H}"
              role="img" aria-label="{html.escape(report['ticker'])} {n_days}-day price chart">
@@ -1041,6 +1113,51 @@ def render_ticker_html(report: dict) -> str:
 
     signal_cls = "buy" if signal["signal"] == "BUY" else "wait"
     vwap_badge = "" if report.get("above_vwap") is None else _badge(report["above_vwap"], "ABOVE", "BELOW")
+
+    # ---- "Other levels" (own 4-column section)
+    price = report["current_price"]
+    other_items = []
+
+    # 52-week range (from yfinance .info via fundamentals) + where price sits in it
+    fund = report.get("fundamentals") or {}
+    try:
+        w52_lo, w52_hi = float(fund.get("52-Week Low")), float(fund.get("52-Week High"))
+        pos52 = (price - w52_lo) / (w52_hi - w52_lo) * 100 if w52_hi > w52_lo else 50.0
+        other_items.append(("52-week range", f"{w52_lo:.2f} - {w52_hi:.2f} (at {pos52:.0f}%)"))
+    except (TypeError, ValueError):
+        other_items.append(("52-week range", "N/A"))
+
+    # ATR range: daily ATR, how much of it today has used, and the ATR projection
+    # (today's low + ATR = projected high, today's high - ATR = projected low)
+    atr_d = report.get("daily_atr")
+    if atr_d:
+        used = today_range["day_range"] / atr_d * 100
+        other_items.append((f"Daily ATR({cfg['ATR_PERIOD']})", f"{atr_d:.2f} (today used {used:.0f}%)"))
+        other_items.append(("ATR projected range",
+                            f"{today_range['day_high'] - atr_d:.2f} - {today_range['day_low'] + atr_d:.2f}"))
+
+    other_items += [
+        ("Today's range", f"{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})"),
+        ("1h entry support", f"{report['entry_support']}"),
+        (f"POC ({cfg.get('CHART_DAYS', 7)}d volume profile)", f"{report.get('poc', 'N/A')}"),
+        ("Session VWAP", f"{report.get('vwap') if report.get('vwap') is not None else 'N/A'} {vwap_badge}"),
+    ]
+    lrc = report.get("lrc")
+    if lrc:
+        pos = lrc["position_pct"]
+        pos_txt = f"{pos:.0f}%" + (" (below)" if pos < 0 else " (above)" if pos > 100 else "")
+        other_items += [
+            (f"Reg. channel ({lrc['bars']} bars, {lrc['dev']}&sigma;)",
+             f"{lrc['last_lower']} / {lrc['last_mid']} / {lrc['last_upper']}"),
+            ("Channel slope", f"{lrc['slope_pct_per_day']:+.2f}%/day"),
+            ("Channel fit (R&sup2;)", f"{lrc['r2']}"),
+            ("Price in channel", pos_txt),
+        ]
+    other_items += [
+        ("Structural stop (1h support - 0.5x daily ATR)", f"{report['stop']}"),
+        ("<strong>Take-Profit Target (1.5x)</strong>", f"<strong>{report['take_profit']}</strong>"),
+    ]
+    other_levels_block = "\n      <h3>Other levels</h3>" + _four_col_table(other_items)
 
     fundamentals = report.get("fundamentals") or {}
     fundamentals_block = ""
@@ -1221,18 +1338,10 @@ def render_ticker_html(report: dict) -> str:
           <table class="detail-table"><tbody>{soft_rows}
           </tbody></table>
 
-          <h3>Other levels</h3>
-          <table class="detail-table"><tbody>
-            <tr><td>Today's range</td><td>{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})</td></tr>
-            <tr><td>1h entry support</td><td>{report['entry_support']}</td></tr>
-            <tr><td>POC ({cfg.get('CHART_DAYS', 7)}d volume profile)</td><td>{report.get('poc', 'N/A')}</td></tr>
-            <tr><td>Session VWAP</td><td>{report.get('vwap') if report.get('vwap') is not None else 'N/A'} {vwap_badge}</td></tr>
-            <tr><td>ATR({cfg['ATR_PERIOD']}) Suggested stop</td><td>{report['stop']} ({cfg['ATR_STOP_MULTIPLIER']}x ATR)</td></tr>
-            <tr><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>{report['take_profit']}</strong></td></tr>
-          </tbody></table>
 
         </div>
       </div>
+      {other_levels_block}
       {catalysts_block}
       {fundamentals_block}
       {analyst_block}
@@ -1353,6 +1462,10 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .price-chart .vwap {{ fill: none; stroke: var(--vwap); stroke-width: 1.8; stroke-opacity: 0.9; }}
   .price-chart .lvl-label.lvl-vwap {{ fill: var(--vwap); }}
   .sw.vwap-sw {{ border-color: var(--vwap); }}
+  .sw.lrc-sw {{ border-top: 6px solid rgba(154,164,178,0.25); height: 0; }}
+  .price-chart .lrc-fill {{ fill: var(--muted); fill-opacity: 0.07; }}
+  .price-chart .lrc-band {{ fill: none; stroke: var(--muted); stroke-opacity: 0.6; stroke-width: 1; }}
+  .price-chart .lrc-mid {{ fill: none; stroke: var(--muted); stroke-opacity: 0.8; stroke-width: 1; stroke-dasharray: 6 4; }}
   .price-chart .lvl {{ stroke-width: 1; stroke-dasharray: 5 4; }}
   .price-chart .lvl.lvl-support {{ stroke: var(--accent); }}
   .price-chart .lvl.lvl-stop {{ stroke: var(--fail); }}
