@@ -94,6 +94,7 @@ def loadData(num, force_redownload=False):
 
 
 def     setEnable(num):
+    constants.CONFIG["ENABLE_INTRADAY"] = num
     constants.CONFIG["SHOW_PREMARKET_PRICE"] = num
     constants.CONFIG["ENABLE_ANALYST_DATA"] = num
     constants.CONFIG["ENABLE_FINVIZ"] = num
