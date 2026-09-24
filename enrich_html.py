@@ -33,6 +33,7 @@ import pandas as pd
 import numpy as np
 import html
 import os
+import requests
 import constants
 from datetime import datetime, timedelta, timezone
 from event_catalysts import *
@@ -97,6 +98,14 @@ CONFIGH = {
     "LRC_LENGTH": None,            # bars to fit (1h bars); None = the whole chart window
     "LRC_DEV": 2.0,                # channel half-width, in std devs of the residuals
     "LRC_SOURCE": "Close",         # price column to fit: "Close", "High", "Low", "Open"
+
+    # Pre-market price from Alpaca (display only). Keys come from the `headers`
+    # passed to get_pre_market_price(), or the APCA_API_KEY_ID /
+    # APCA_API_SECRET_KEY environment variables.
+    "PREMARKET_ENABLED": True,
+    "PREMARKET_START": "04:00",    # pre-market session start, MARKET_TZ
+    "ALPACA_FEED": "iex",          # "iex" (free plan) or "sip" (paid, all exchanges)
+    "ALPACA_HEADERS": None,        # or {"APCA-API-KEY-ID": "...", "APCA-API-SECRET-KEY": "..."}
 }
 
 
@@ -348,6 +357,60 @@ def volume_poc(df: pd.DataFrame, bins: int = 50) -> float:
 
     k = int(profile.argmax())
     return round(float((edges[k] + edges[k + 1]) / 2), 2)
+
+
+ALPACA_DATA_URL = "https://data.alpaca.markets/v2"
+
+
+def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "iex",
+                         tz: str = "America/New_York", start_hhmm: str = "04:00",
+                         open_hhmm: str = "09:30", timeout: float = 10.0) -> float | None:
+    """Latest pre-market trade price for `ticker` from Alpaca, for TODAY's
+    pre-market session (start_hhmm to open_hhmm, exchange time).
+
+    Takes the close of the last 1-minute bar between the pre-market start and
+    min(now, the open). So it's the live pre-market price if run during
+    pre-market, and the final pre-market price if run after the open.
+    Returns None if there are no pre-market trades yet (before 04:00 ET, a
+    weekend/holiday, or none on this feed), or on any API/network error.
+
+    headers: {"APCA-API-KEY-ID": ..., "APCA-API-SECRET-KEY": ...}; if None,
+    read from the APCA_API_KEY_ID / APCA_API_SECRET_KEY environment variables.
+    feed: "iex" works on the free plan; "sip" covers all exchanges (paid plan).
+    """
+    if headers is None:
+        key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
+        if not key or not secret:
+            return None
+        headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+
+    now = pd.Timestamp.now(tz=tz)
+    sh, sm = map(int, start_hhmm.split(":"))
+    oh, om = map(int, open_hhmm.split(":"))
+    start = now.normalize() + pd.Timedelta(hours=sh, minutes=sm)
+    end = min(now, now.normalize() + pd.Timedelta(hours=oh, minutes=om))
+    if end <= start:
+        return None  # today's pre-market hasn't started yet
+
+    params = {
+        "timeframe": "1Min",
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "feed": feed,
+        "adjustment": "raw",
+        "limit": 10000,
+    }
+    try:
+        resp = requests.get(f"{ALPACA_DATA_URL}/stocks/{ticker}/bars",
+                            headers=headers, params=params, timeout=timeout)
+        resp.raise_for_status()
+        bars = resp.json().get("bars") or []
+    except (requests.RequestException, ValueError) as e:
+        print(f"  [{ticker}] pre-market price unavailable: {e}")
+        return None
+    if not bars:
+        return None
+    return round(float(bars[-1]["c"]), 2)
 
 
 def linear_regression_channel(df: pd.DataFrame, length, dev: float, source: str = "Close") -> dict | None:
@@ -679,6 +742,13 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
+    pre_market = None
+    if cfg.get("PREMARKET_ENABLED", True):
+        pre_market = get_pre_market_price(
+            cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"), feed=cfg.get("ALPACA_FEED", "iex"),
+            tz=cfg.get("MARKET_TZ", "America/New_York"), start_hhmm=cfg.get("PREMARKET_START", "04:00"),
+            open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
+
     # The channel is always computed because its slope decides whether the ticker
     # goes to the _up or _down report; LRC_ENABLED only controls whether it's shown.
     lrc_fit = linear_regression_channel(chart["ohlcv"], cfg.get("LRC_LENGTH"),
@@ -719,6 +789,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "above_vwap": above_vwap,
         "lrc": lrc,
         "trend_dir": trend_dir,
+        "pre_market": pre_market,
     }
 
 
@@ -753,6 +824,8 @@ def print_report(report: dict) -> None:
     if report.get("vwap") is not None:
         side = "above" if report["above_vwap"] else "below"
         print(f"Session VWAP: {report['vwap']} (price {side} VWAP)")
+    if report.get("pre_market") is not None:
+        print(f"Pre-market price: {report['pre_market']}")
     lrc = report.get("lrc")
     if lrc:
         print(f"Regression channel ({lrc['bars']} bars, {lrc['dev']}σ): {lrc['last_lower']} / "
@@ -922,6 +995,7 @@ def render_price_chart_svg(report: dict) -> str:
     # ---- horizontal levels
     levels = [
         ("Target", report.get("take_profit"), "lvl-target"),
+        ("Pre-mkt", report.get("pre_market"), "lvl-premkt"),
         ("POC", report.get("poc"), "lvl-poc"),
         ("Support", report.get("entry_support"), "lvl-support"),
         ("Stop", report.get("stop"), "lvl-stop"),
@@ -1085,6 +1159,8 @@ def render_price_chart_svg(report: dict) -> str:
     parts.append(f'<circle class="last" cx="{x(n - 1):.1f}" cy="{y(last_c):.1f}" r="3"/>')
 
     lrc_legend = ' <i class="sw lrc-sw"></i>Reg. channel' if lrc else ""
+    if report.get("pre_market") is not None:
+        lrc_legend = ' <i class="sw premkt-sw"></i>Pre-market' + lrc_legend
     first_o = float(df["Open"].iloc[0])
     chg = (last_c / first_o - 1) * 100 if first_o else 0.0
     chg_cls = "pass" if chg >= 0 else "fail"
@@ -1144,6 +1220,9 @@ def render_ticker_html(report: dict) -> str:
                             f"{today_range['day_high'] - atr_d:.2f} - {today_range['day_low'] + atr_d:.2f}"))
 
     other_items += [
+        ("Pre-market price", (
+            f"{report['pre_market']:.2f} ({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
+            if report.get("pre_market") is not None else "N/A")),
         ("Today's range", f"{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})"),
         ("1h entry support", f"{report['entry_support']}"),
         (f"POC ({cfg.get('CHART_DAYS', 7)}d volume profile)", f"{report.get('poc', 'N/A')}"),
@@ -1379,6 +1458,7 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
     --ma3: #85c1e9;
     --poc: #ff79c6;
     --vwap: #ffffff;
+    --premkt: #ffe600;
   }}
   * {{ box-sizing: border-box; }}
   body {{
@@ -1469,6 +1549,9 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .price-chart .vwap {{ fill: none; stroke: var(--vwap); stroke-width: 1.8; stroke-opacity: 0.9; }}
   .price-chart .lvl-label.lvl-vwap {{ fill: var(--vwap); }}
   .sw.vwap-sw {{ border-color: var(--vwap); }}
+  .sw.premkt-sw {{ border-top: 2px dotted var(--premkt); }}
+  .price-chart .lvl.lvl-premkt {{ stroke: var(--premkt); stroke-width: 1.5; stroke-dasharray: 2 4; }}
+  .price-chart .lvl-label.lvl-premkt {{ fill: var(--premkt); }}
   .sw.lrc-sw {{ border-top: 6px solid rgba(154,164,178,0.25); height: 0; }}
   .price-chart .lrc-fill {{ fill: var(--muted); fill-opacity: 0.07; }}
   .price-chart .lrc-band {{ fill: none; stroke: var(--muted); stroke-opacity: 0.6; stroke-width: 1; }}
