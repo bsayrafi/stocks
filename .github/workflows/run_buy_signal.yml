@@ -35,7 +35,7 @@ jobs:
         run: |
           mkdir -p reports
           mkdir -p data
-          python buy_entry_auto.py
+          python run_buy_entry.py
 
       # Step 5: Save the generated Excel files as Artifacts
       - name: Upload Excel Output
