@@ -1,4 +1,4 @@
-name: run FairValueGapSignal
+name: Run FairValueGapSignal
 
 on:
   # schedule:
