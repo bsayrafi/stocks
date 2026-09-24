@@ -26,27 +26,27 @@ os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 
 small_enrichment_tickers = [
-    "QTWO", "PGY", "RIGL", "ETON", "CRWV", 
-    "MITK", "THRM", "GPRE", "PGY", "ARLO", "DSP", "MLKN", "PCRX", "HCSG", "GDYN",
+    "QTWO", "PGY", "RIGL", "ETON", 
+    "MITK", "THRM", "GPRE", "PGY", "ARLO", "DSP", "MLKN", "PCRX", "HCSG", "HIVE", "GDYN",
     "WWW", "MG", "ASTH", "GCT", "NX", "SWBI", "ZVRA", "KRP", "PGNY", "XPRO",
-    "GNK", "GOLD", "PRGS", "INVX", "MNTN", "PANL", "ATEN", "IRWD", "ARHS", "PAYS",
-    "VFF", "SWIM", "HOPE", "REPX", "AMN",
+    "GNK", "GOLD", "PRGS", "INVX", "MNTN", "MGY", "NXDR", "PANL", "ATEN", "IRWD", "ARHS", "PAYS",
+    "VFF", "SWIM", "HOPE", "REPX", "AMN", "QUBT", "QBTS", "IONQ", "NOK", "HPE",
 ]
 
 large_enrichment_tickers = [
 
-    "A", "AAPL", "ABNB", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "ANET",
-    "APH", "ARMK", "ARQT", "ATI", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG",
-    "CART", "CAT", "CDE", "CDNA", "CDW", "CGNX", "CHRD", "COHR", "COP", "CRM",
+    "A", "AAPL", "AAOI", "ABNB", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", 
+    "APH", "ARMK", "ARQT", "ATRO", "ATI", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG",
+    "CART", "CAT", "CDE", "CDNA", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", "CRM", "CRDO", "CRWD", "CRVW", 
     "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR",
-    "DOCN", "DT", "ECL", "EMR", "ESTC", "EXLS", "FCX", "FIVE", "FIVN", "FLS",
-    "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GTES", "HALO", "HQY", "INGM",
-    "IOT", "KEYS", "KLAC", "KO", "LECO", "LH", "LLY", "LRCX", "MANH", "MDB",
-    "MNST", "MRK", "MRVL", "MSFT", "MTSI", "MU", "NEM", "NESR", "NOW", "NTAP",
-    "NVDA", "OKTA", "ONTO", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS",
-    "PH", "PLTR", "PR", "PSX", "Q", "REGN", "RGLD", "ROK", "SCHW", "SHC",
-    "SITM", "SLB", "SMTC", "SNDK", "SNX", "SSRM", "TER", "TKR", "TMO", "TTC",
-    "TTEK", "TWLO", "TXN", "VCYT", "VEEV", "VSH", "WAT", "WAY", "WDAY", "WK",
+    "DOCN", "DT", "ECL", "EMR", "ESTC", "EXLS", "ENTG", "FCX", "FIVE", "FIVN", "FLS",
+    "FLYW", "FORM", "FRSH", "FTI", "GOOG", "GEV", "GLW", "GTES", "HALO", "HQY", "INGM", "IREN",
+    "IOT", "INTC", "KEYS", "KLAC", "KO", "LECO", "LITE", "KLH", "LLY", "LRCX", "MANH", "MDB", "META",
+    "MNST", "MRK", "MRVL", "MSFT", "MTSI", "MU", "NEM", "NESR", "NOW", "NTAP", "NBIS",
+    "NVDA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS",
+    "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "ROK", "RKLB", "SCHW", "SHC", "SOFI", "SKHY", "SMTC", 
+    "SITM", "SLB", "SMTC", "SNDK", "SNX", "SSRM", "SPCX", "TER", "TKR", "TMO", "TTC", "TSLA", "TSM",
+    "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", "VSH", "VST", "WAT", "WAY", "WDAY", "WK",
     "WSM", "XYZ", "ZBRA", "ZM"
 
 ]
