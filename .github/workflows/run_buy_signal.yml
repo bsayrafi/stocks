@@ -37,12 +37,16 @@ jobs:
           mkdir -p data
           python run_buy_entry.py
 
+      # Step 4.5: Generate the date (Day-Month)
+      - name: Get current date
+        run: echo "DATE=$(date +'%m_%d')" >> $GITHUB_ENV
+        
       # Step 5: Save the generated Excel files as Artifacts
       - name: Upload Excel Output
         uses: actions/upload-artifact@v4
         with:
-          name: Screener-Results
+          name: BuySignal_Results_${{ env.DATE }}
           path: |
             data/*.xlsx
             reports/*.html
-          retention-days: 7
+          retention-days: 1
