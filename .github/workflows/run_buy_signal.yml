@@ -1,4 +1,4 @@
-name: Run Stock Screener
+name: Run Buy Signal
 
 # This allows you to run it manually with a button click
 on: 
