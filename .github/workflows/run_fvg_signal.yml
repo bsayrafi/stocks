@@ -1,4 +1,4 @@
-name: FVG Hourly Signal Scan
+name: run FairValueGapSignal
 
 on:
   # schedule:
