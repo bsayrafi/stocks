@@ -76,7 +76,7 @@ def run_enrichment(num):
         constants.set_pkl_path(num)
         enrich_html.main(enrichment_tickers, fileapp)
     
-        results2_entry = check_buy_zone_confirmation(enrichment_tickers)
+        #results2_entry = check_buy_zone_confirmation(enrichment_tickers)
         all_df = results2_entry["all"]
         elapsed = time.time() - start
     
