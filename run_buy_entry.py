@@ -136,5 +136,5 @@ def run_enrichment(num):
 
 
 #num = 2
-run_enrichment(1)
+run_enrichment(0)
 run_enrichment(2)
