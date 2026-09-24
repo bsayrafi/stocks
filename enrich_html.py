@@ -104,8 +104,13 @@ CONFIGH = {
     # APCA_API_SECRET_KEY environment variables.
     "PREMARKET_ENABLED": True,
     "PREMARKET_START": "04:00",    # pre-market session start, MARKET_TZ
-    "ALPACA_FEED": "iex",          # "iex" (free plan) or "sip" (paid, all exchanges)
+    "ALPACA_FEED": "sip",          # "sip" = all exchanges; "iex" = live but IEX-only
+    "ALPACA_SIP_DELAY_MIN": 16,    # free plan: SIP must be >=15 min old; 0 if you pay for live SIP
     "ALPACA_HEADERS": None,        # or {"APCA-API-KEY-ID": "...", "APCA-API-SECRET-KEY": "..."}
+    "ALPACA_HEADERS": {
+        "APCA-API-KEY-ID": "PKGT4VDNU6I3UJVRNUFYT34PK2",        # your API key
+        "APCA-API-SECRET-KEY": "E9zQAKbXS5ATHJ399iqPGq5GaYqdKQq6DQDjcKrQQQDx", # your secret
+    },
 }
 
 
@@ -362,35 +367,47 @@ def volume_poc(df: pd.DataFrame, bins: int = 50) -> float:
 ALPACA_DATA_URL = "https://data.alpaca.markets/v2"
 
 
-def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "iex",
-                         tz: str = "America/New_York", start_hhmm: str = "04:00",
-                         open_hhmm: str = "09:30", timeout: float = 10.0) -> float | None:
+def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "sip",
+                         delay_minutes: int = 16, tz: str = "America/New_York",
+                         start_hhmm: str = "04:00", open_hhmm: str = "09:30",
+                         timeout: float = 10.0, with_time: bool = False):
     """Latest pre-market trade price for `ticker` from Alpaca, for TODAY's
     pre-market session (start_hhmm to open_hhmm, exchange time).
 
     Takes the close of the last 1-minute bar between the pre-market start and
-    min(now, the open). So it's the live pre-market price if run during
-    pre-market, and the final pre-market price if run after the open.
-    Returns None if there are no pre-market trades yet (before 04:00 ET, a
-    weekend/holiday, or none on this feed), or on any API/network error.
+    min(now - delay_minutes, the open).
+
+    feed="sip" (default) covers ALL exchanges. Alpaca's free plan allows SIP
+    data only if it's at least 15 minutes old, so with delay_minutes=16 the
+    query never touches the restricted window: during pre-market you get the
+    price as of ~16 minutes ago; after the open you get the final pre-market
+    price (09:14 ET or later is fully allowed by 09:46 ET). With a paid data
+    plan, pass delay_minutes=0 for live SIP. feed="iex" is live on the free
+    plan but only sees IEX-exchange trades (often thin pre-market).
+
+    Returns the price (float), or None if there are no pre-market trades in
+    the window (before ~04:16 ET, weekend/holiday) or on any API/network error.
+    with_time=True returns (price, "HH:MM") instead, the time of that bar in
+    exchange time, or (None, None).
 
     headers: {"APCA-API-KEY-ID": ..., "APCA-API-SECRET-KEY": ...}; if None,
     read from the APCA_API_KEY_ID / APCA_API_SECRET_KEY environment variables.
-    feed: "iex" works on the free plan; "sip" covers all exchanges (paid plan).
     """
+    none = (None, None) if with_time else None
     if headers is None:
         key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
         if not key or not secret:
-            return None
+            return none
         headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 
     now = pd.Timestamp.now(tz=tz)
     sh, sm = map(int, start_hhmm.split(":"))
     oh, om = map(int, open_hhmm.split(":"))
     start = now.normalize() + pd.Timedelta(hours=sh, minutes=sm)
-    end = min(now, now.normalize() + pd.Timedelta(hours=oh, minutes=om))
+    latest_allowed = (now - pd.Timedelta(minutes=delay_minutes)).floor("min")
+    end = min(latest_allowed, now.normalize() + pd.Timedelta(hours=oh, minutes=om))
     if end <= start:
-        return None  # today's pre-market hasn't started yet
+        return none  # today's pre-market hasn't started yet (or is still inside the delay)
 
     params = {
         "timeframe": "1Min",
@@ -406,11 +423,14 @@ def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "
         resp.raise_for_status()
         bars = resp.json().get("bars") or []
     except (requests.RequestException, ValueError) as e:
-        print(f"  [{ticker}] pre-market price unavailable: {e}")
-        return None
+        print(f"  [{ticker}] pre-market price unavailable ({feed}): {e}")
+        return none
     if not bars:
-        return None
-    return round(float(bars[-1]["c"]), 2)
+        return none
+    price = round(float(bars[-1]["c"]), 2)
+    if with_time:
+        return price, pd.Timestamp(bars[-1]["t"]).tz_convert(tz).strftime("%H:%M")
+    return price
 
 
 def linear_regression_channel(df: pd.DataFrame, length, dev: float, source: str = "Close") -> dict | None:
@@ -742,10 +762,12 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
-    pre_market = None
+    pre_market, pre_market_time = None, None
     if cfg.get("PREMARKET_ENABLED", True):
-        pre_market = get_pre_market_price(
-            cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"), feed=cfg.get("ALPACA_FEED", "iex"),
+        feed = cfg.get("ALPACA_FEED", "sip")
+        pre_market, pre_market_time = get_pre_market_price(
+            cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"), feed=feed,
+            delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16) if feed == "sip" else 0, with_time=True,
             tz=cfg.get("MARKET_TZ", "America/New_York"), start_hhmm=cfg.get("PREMARKET_START", "04:00"),
             open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
 
@@ -790,6 +812,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "lrc": lrc,
         "trend_dir": trend_dir,
         "pre_market": pre_market,
+        "pre_market_time": pre_market_time,
     }
 
 
@@ -825,7 +848,7 @@ def print_report(report: dict) -> None:
         side = "above" if report["above_vwap"] else "below"
         print(f"Session VWAP: {report['vwap']} (price {side} VWAP)")
     if report.get("pre_market") is not None:
-        print(f"Pre-market price: {report['pre_market']}")
+        print(f"Pre-market price: {report['pre_market']} (as of {report.get('pre_market_time')} ET)")
     lrc = report.get("lrc")
     if lrc:
         print(f"Regression channel ({lrc['bars']} bars, {lrc['dev']}σ): {lrc['last_lower']} / "
@@ -1221,7 +1244,8 @@ def render_ticker_html(report: dict) -> str:
 
     other_items += [
         ("Pre-market price", (
-            f"{report['pre_market']:.2f} ({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
+            f"{report['pre_market']:.2f} @ {report.get('pre_market_time')} ET "
+            f"({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
             if report.get("pre_market") is not None else "N/A")),
         ("Today's range", f"{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})"),
         ("1h entry support", f"{report['entry_support']}"),
