@@ -679,10 +679,16 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
-    lrc = None
-    if cfg.get("LRC_ENABLED", True):
-        lrc = linear_regression_channel(chart["ohlcv"], cfg.get("LRC_LENGTH"),
+    # The channel is always computed because its slope decides whether the ticker
+    # goes to the _up or _down report; LRC_ENABLED only controls whether it's shown.
+    lrc_fit = linear_regression_channel(chart["ohlcv"], cfg.get("LRC_LENGTH"),
                                         cfg.get("LRC_DEV", 2.0), cfg.get("LRC_SOURCE", "Close"))
+    if lrc_fit is not None:
+        trend_dir = "up" if lrc_fit["slope_per_bar"] >= 0 else "down"
+    else:  # too few bars to fit - fall back to first vs last close in the window
+        w = chart["ohlcv"]["Close"]
+        trend_dir = "up" if float(w.iloc[-1]) >= float(w.iloc[0]) else "down"
+    lrc = lrc_fit if cfg.get("LRC_ENABLED", True) else None
     chart["lrc"] = lrc
 
     fundamentals = fetch_fundamentals(cfg["TICKER"])
@@ -712,6 +718,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "vwap": vwap_now,
         "above_vwap": above_vwap,
         "lrc": lrc,
+        "trend_dir": trend_dir,
     }
 
 
@@ -1305,7 +1312,7 @@ def render_ticker_html(report: dict) -> str:
       <div class="card-header">
         <h2>{html.escape(report['ticker'])}</h2>
         <div class="price">${report['current_price']:.2f}</div>
-        <div class="signal-badge {signal_cls}">{signal['signal']}</div>
+        <div class="signal-badge {signal_cls}">{'BUY_SIGNAL' if signal['signal'] == 'BUY' else signal['signal']}</div>
       </div>
       {render_price_chart_svg(report)}
 
@@ -1486,34 +1493,65 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
 """
 
 
+def report_filter_checks(report: dict) -> dict:
+    """The four report-inclusion checks. Each value is True if the ticker FAILS
+    that check. A ticker is left out of the HTML only when it fails ALL four."""
+    signal = report["signal"]
+    hard_passed = sum(bool(v) for v in signal["hard_requirements_detail"].values())
+    scd = signal["structural_confirmation_detail"]
+    soft_score = int(str(signal["soft_score"]).split("/")[0])
+    eps_improving = (report.get("analyst") or {}).get("eps_improving")
+    return {
+        "hard_lt_3": hard_passed < 3,                                    # fewer than 3 of 4 hard checks pass
+        "no_structural": not (scd["daily_bullish_pattern"] or scd["4h_bullish_pattern"]),
+        "soft_lt_2": soft_score < 2,
+        "eps_deteriorating": eps_improving is False,                     # N/A does not count as failing
+    }
+
+
+def _skipped_card(skipped: list) -> str:
+    if not skipped:
+        return ""
+    items = "".join(f"<li><strong>{html.escape(t)}</strong>: {html.escape(why)}</li>" for t, why in skipped)
+    return (f'<section class="card"><h3>Not shown ({len(skipped)})</h3>'
+            f'<ul class="note">{items}</ul></section>')
+
+
 def main(tickers, fileapp):
-    """Screen a list of tickers: print each to console and write one HTML
-    report covering all of them. Call as main(TICKERS) or main(["ORCL", ...])."""
-    sections_html = []
+    """Screen a list of tickers and write two HTML reports:
+      <fileapp>_signal_report_<timestamp>_up.html   - regression channel sloping up
+      <fileapp>_signal_report_<timestamp>_down.html - regression channel sloping down
+    A ticker is left out entirely only if it fails ALL four checks in
+    report_filter_checks(). Call as main(TICKERS, "name")."""
+    sections = {"up": [], "down": []}
+    skipped = []  # (ticker, reason) - listed at the bottom of both reports
     sp500_members = _get_sp500_membership(verbose=False)
 
     for ticker in tickers:
         try:
             report = run_screen(ticker, CONFIGH, sp500_members=sp500_members)
             #print_report(report)
-            sections_html.append(render_ticker_html(report))
+            fails = report_filter_checks(report)
+            if all(fails.values()):
+                print(f"=== {ticker}: filtered out (fails all 4 checks) ===")
+                skipped.append((ticker, "filtered out - fails all 4 checks (hard <3/4, no pattern, "
+                                        "soft <2, EPS deteriorating)"))
+                continue
+            sections[report["trend_dir"]].append(render_ticker_html(report))
         except Exception as e:
             print(f"\n=== {ticker}: skipped due to error ===")
             print(f"  {type(e).__name__}: {e}")
-            sections_html.append(
-                f'<section class="card"><h2>{html.escape(ticker)}</h2>'
-                f'<p class="note">Skipped: {html.escape(type(e).__name__)}: {html.escape(str(e))}</p></section>'
-            )
+            skipped.append((ticker, f"error - {type(e).__name__}: {e}"))
 
     tz_gmt3 = timezone(timedelta(hours=3))
     #timestamp = datetime.now(tz_gmt3).strftime("%Y%m%d_%H%M")
     timestamp = constants.get_dayprefix()+"_" + constants.get_timeprefix()
-    out_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}.html")
 
-    report_title = f"{fileapp}_Signal Report {timestamp}"
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(build_html_report(report_title, "\n".join(sections_html)))
-
-    print(f"HTML report written to {out_path}")
-
-
+    for direction in ("up", "down"):
+        out_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}_{direction}.html")
+        report_title = f"{fileapp}_Signal Report {timestamp}_{direction}"
+        body = "\n".join(sections[direction]) or (
+            f'<section class="card"><p class="note">No tickers with a {direction}-sloping channel.</p></section>')
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(build_html_report(report_title, body + _skipped_card(skipped)))
+        print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
