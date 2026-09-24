@@ -94,6 +94,7 @@ def loadData(num, force_redownload=False):
 
 
 def     setEnable(num):
+    constants.CONFIG["ENABLE_INTRADAY"] = num
     constants.CONFIG["SHOW_PREMARKET_PRICE"] = num
     constants.CONFIG["ENABLE_ANALYST_DATA"] = num
     constants.CONFIG["ENABLE_FINVIZ"] = num
@@ -196,8 +197,8 @@ def runCoreScreener(num=2, force_redownload=True) :
   # 1 Medium
   # 0 small
 setEnable(1)
-runCoreScreener(num=0, force_redownload=False)
-runCoreScreener(num=2, force_redownload=False)
+runCoreScreener(num=0, force_redownload=True)
+runCoreScreener(num=2, force_redownload=True)
 setEnable(0)
 
 
