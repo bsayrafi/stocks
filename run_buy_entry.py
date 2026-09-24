@@ -50,10 +50,7 @@ large_enrichment_tickers = [
     "WSM", "XYZ", "ZBRA", "ZM"
 
 ]
-large_enrichment_tickers = [
 
-    "A", "AAPL", "AAOI", "ABNB", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", 
-    "APH", "ARMK", "ARQT", "ATRO", "ATI", "AVGO",]
 
 def run_enrichment(num, runtype="all"):
     enrichment_tickers = []
@@ -142,5 +139,5 @@ def run_enrichment(num, runtype="all"):
 
 #num = 0 small
 runtype = "html"
-#run_enrichment(0, runtype)
+run_enrichment(0, runtype)
 run_enrichment(2, runtype)
