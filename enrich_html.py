@@ -283,7 +283,7 @@ CONFIGH = {
     # HTML report price chart (display only, not part of the signal)
     "CSV_REPORT": True,            # also write reports/<name>_signal_report_<timestamp>.csv (1 row per ticker)
     "PROFILE": True,               # print a timing breakdown at the end of main()
-    "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
+    "MAX_WORKERS": 8,              # tickers screened in parallel (1 = one at a time)
     "CACHE_ENABLED": True,         # cache once-a-day data (.info, analyst, earnings...) on disk
     "CACHE_DIR": "cache",
     "FINNHUB_MAX_PER_MIN": 55,     # Finnhub free tier allows 60 calls/minute
