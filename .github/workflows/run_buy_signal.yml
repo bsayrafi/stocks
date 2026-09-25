@@ -83,4 +83,5 @@ jobs:
             data/*.xlsx
             data/*.csv
             reports/*.html
+            reports/*.csv
           retention-days: 1
