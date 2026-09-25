@@ -131,6 +131,33 @@ def daily_cached(name: str, key: str, fn, is_valid=bool):
     return value
 
 
+def ttl_cached(name: str, key: str, fn, ttl_minutes: float, is_valid=lambda v: v is not None):
+    """Like daily_cached, but a cached value is only reused while it is younger
+    than ttl_minutes (e.g. news: 60). Uses the same CACHE_DIR and daily pruning."""
+    if not CONFIGH.get("CACHE_ENABLED", True) or not ttl_minutes:
+        return fn()
+    path = _cache_path(name, key)
+    try:
+        if time.time() - os.path.getmtime(path) < ttl_minutes * 60:
+            with open(path, "rb") as f:
+                value = pickle.load(f)
+            _prof_add("  cache hits (read from disk)", key, 0.0)
+            return value
+    except (OSError, pickle.PickleError, EOFError):
+        pass
+    value = fn()
+    if is_valid(value):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = f"{path}.{threading.get_ident()}.tmp"
+            with open(tmp, "wb") as f:
+                pickle.dump(value, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return value
+
+
 def prune_cache() -> None:
     """Delete cache files from previous days."""
     d = CONFIGH.get("CACHE_DIR", "cache")
@@ -290,6 +317,9 @@ CONFIGH = {
     "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
     "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
+    "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,
+                                   # "all" = every ticker shown, "none" = no news at all
+    "NEWS_CACHE_MIN": 60,          # reuse a ticker's news for this many minutes (0 = always fetch)
 }
 
 
@@ -331,6 +361,24 @@ def prefetch_hourly_data(tickers: list, period: str, interval: str) -> dict:
             df.index = pd.to_datetime(df.index)
             out[t] = df
     return out
+
+
+def prefetch_pre_market(tickers: list, cfg: dict) -> dict | None:
+    """Pre-market prices for ALL tickers in a few batched Alpaca requests
+    (instead of 1-2 per ticker, which would hit Alpaca's 200 requests/minute
+    free limit on big lists). Returns {ticker: details} or None if disabled."""
+    if not cfg.get("PREMARKET_ENABLED", True):
+        return None
+    feed = cfg.get("ALPACA_FEED", "auto")
+    kw = dict(headers=cfg.get("ALPACA_HEADERS"), tz=cfg.get("MARKET_TZ", "America/New_York"),
+              start_hhmm=cfg.get("PREMARKET_START", "04:00"), open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
+    if feed == "auto":
+        return get_best_pre_market_prices(
+            tickers, sip_delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16),
+            move_pct=cfg.get("PREMARKET_MOVE_PCT", 0.3),
+            max_iex_gap_pct=cfg.get("PREMARKET_IEX_MAX_GAP_PCT", 0.5), **kw)
+    return get_pre_market_prices(
+        tickers, feed=feed, delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16) if feed == "sip" else 0, **kw)
 
 
 def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
@@ -571,43 +619,79 @@ def volume_poc(df: pd.DataFrame, bins: int = 50) -> float:
 ALPACA_DATA_URL = "https://data.alpaca.markets/v2"
 
 
-def _alpaca_premarket_bars(ticker: str, headers: dict | None, feed: str, delay_minutes: int = 0,
-                           tz: str = "America/New_York", start_hhmm: str = "04:00",
-                           open_hhmm: str = "09:30", timeout: float = 10.0) -> list | None:
-    """1-minute bars for TODAY's pre-market session on one Alpaca feed, from
-    start_hhmm up to min(now - delay_minutes, open_hhmm). Each bar is
-    {"t": pd.Timestamp (exchange tz), "c": close, "v": volume}.
-    Returns [] if the window hasn't started / has no trades, None on error or
-    missing keys."""
+def _alpaca_headers(headers: dict | None) -> dict | None:
+    """Explicit headers -> constants.CONFIG -> APCA_* environment variables."""
     if headers is None:
         headers = _SECRETS.get("ALPACA_HEADERS")
     if headers is None:
         key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
-        if not key or not secret:
-            return None
-        headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+        if key and secret:
+            headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    return headers
 
+
+def _alpaca_premarket_bars_multi(tickers: list, headers: dict | None, feed: str, delay_minutes: int = 0,
+                                 tz: str = "America/New_York", start_hhmm: str = "04:00",
+                                 open_hhmm: str = "09:30", timeout: float = 15.0,
+                                 chunk: int = 100) -> dict | None:
+    """1-minute bars for TODAY's pre-market session for MANY tickers at once, on
+    one Alpaca feed, from start_hhmm up to min(now - delay_minutes, open_hhmm).
+    Uses Alpaca's multi-symbol endpoint: one request per `chunk` tickers (plus
+    extra pages when there are more than 10,000 bars), instead of one per ticker.
+    Returns {ticker: [{"t": Timestamp (exchange tz), "c": close, "v": volume}, ...]}
+    (a ticker with no pre-market trades gets []), or None on error / missing keys."""
+    headers = _alpaca_headers(headers)
+    if headers is None:
+        return None
     now = pd.Timestamp.now(tz=tz)
     sh, sm = map(int, start_hhmm.split(":"))
     oh, om = map(int, open_hhmm.split(":"))
     start = now.normalize() + pd.Timedelta(hours=sh, minutes=sm)
     latest_allowed = (now - pd.Timedelta(minutes=delay_minutes)).floor("min")
     end = min(latest_allowed, now.normalize() + pd.Timedelta(hours=oh, minutes=om))
+    out = {t: [] for t in tickers}
     if end <= start:
-        return []
+        return out  # today's pre-market hasn't started yet (or is still inside the delay)
 
-    params = {"timeframe": "1Min", "start": start.isoformat(), "end": end.isoformat(),
-              "feed": feed, "adjustment": "raw", "limit": 10000}
+    # Yahoo writes share classes as BRK-B, Alpaca as BRK.B
+    to_alpaca = {t: t.replace("-", ".") for t in tickers}
+    from_alpaca = {v: k for k, v in to_alpaca.items()}
+    symbols = list(to_alpaca.values())
     try:
-        resp = requests.get(f"{ALPACA_DATA_URL}/stocks/{ticker}/bars",
-                            headers=headers, params=params, timeout=timeout)
-        resp.raise_for_status()
-        raw = resp.json().get("bars") or []
+        for i in range(0, len(symbols), chunk):
+            params = {"symbols": ",".join(symbols[i:i + chunk]), "timeframe": "1Min",
+                      "start": start.isoformat(), "end": end.isoformat(), "feed": feed,
+                      "adjustment": "raw", "limit": 10000}
+            while True:
+                resp = requests.get(f"{ALPACA_DATA_URL}/stocks/bars", headers=headers,
+                                    params=params, timeout=timeout)
+                resp.raise_for_status()
+                body = resp.json()
+                for sym, bars in (body.get("bars") or {}).items():
+                    t = from_alpaca.get(sym, sym)
+                    out.setdefault(t, []).extend(
+                        {"t": pd.Timestamp(b["t"]).tz_convert(tz), "c": float(b["c"]), "v": float(b.get("v", 0))}
+                        for b in bars)
+                token = body.get("next_page_token")
+                if not token:
+                    break
+                params["page_token"] = token
     except (requests.RequestException, ValueError) as e:
-        print(f"  [{ticker}] pre-market bars unavailable ({feed}): {e}")
+        print(f"  pre-market bars unavailable ({feed}, batch): {e}")
         return None
-    return [{"t": pd.Timestamp(b["t"]).tz_convert(tz), "c": float(b["c"]), "v": float(b.get("v", 0))}
-            for b in raw]
+    for t in out:
+        out[t].sort(key=lambda b: b["t"])
+    return out
+
+
+def _alpaca_premarket_bars(ticker: str, headers: dict | None, feed: str, delay_minutes: int = 0,
+                           tz: str = "America/New_York", start_hhmm: str = "04:00",
+                           open_hhmm: str = "09:30", timeout: float = 10.0) -> list | None:
+    """Single-ticker version of _alpaca_premarket_bars_multi: the bars list, []
+    if no trades yet, None on error / missing keys."""
+    bars = _alpaca_premarket_bars_multi([ticker], headers, feed, delay_minutes, tz,
+                                        start_hhmm, open_hhmm, timeout)
+    return None if bars is None else bars.get(ticker, [])
 
 
 @_profiled("pre-market (Alpaca, 1 feed)")
@@ -622,7 +706,8 @@ def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "
     feed="iex": live (pass delay_minutes=0) but only IEX-exchange trades.
 
     Returns the price (float) or None. with_time=True returns (price, "HH:MM").
-    See get_best_pre_market_price() to combine both feeds automatically.
+    See get_best_pre_market_price() to combine both feeds automatically, and
+    get_pre_market_prices() / get_best_pre_market_prices() for many tickers at once.
     """
     bars = _alpaca_premarket_bars(ticker, headers, feed, delay_minutes, tz, start_hhmm, open_hhmm, timeout)
     if not bars:
@@ -631,33 +716,9 @@ def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "
     return (price, bars[-1]["t"].strftime("%H:%M")) if with_time else price
 
 
-@_profiled("pre-market (Alpaca auto: 2 calls)")
-def get_best_pre_market_price(ticker: str, headers: dict | None = None, sip_delay_minutes: int = 16,
-                              move_pct: float = 0.3, max_iex_gap_pct: float = 0.5,
-                              tz: str = "America/New_York", start_hhmm: str = "04:00",
-                              open_hhmm: str = "09:30", timeout: float = 10.0,
-                              with_details: bool = False):
-    """Pick between delayed SIP (complete, ~16 min old) and live IEX (fresh,
-    but only IEX-exchange trades) for the pre-market price.
-
-    Decision, in order:
-      1. Only one feed has data            -> use that one.
-      2. IEX has no trade newer than SIP   -> SIP (IEX adds nothing fresher).
-      3. IEX disagreed with SIP at SIP's own timestamp by more than
-         max_iex_gap_pct                   -> SIP (IEX too thin/unreliable today).
-      4. Price moved >= move_pct from the SIP price to the latest IEX price
-                                           -> IEX (the market has moved since the
-                                              SIP snapshot, so the live price matters).
-      5. Otherwise (little movement)       -> SIP (full-market price, still accurate).
-
-    Returns the price (float) or None. with_details=True returns a dict:
-    {"price", "time", "source" ("sip"/"iex"), "reason", "sip_price", "sip_time",
-     "iex_price", "iex_time", "move_pct"} (price None if neither feed has data).
-    """
-    kw = dict(tz=tz, start_hhmm=start_hhmm, open_hhmm=open_hhmm, timeout=timeout)
-    sip = _alpaca_premarket_bars(ticker, headers, "sip", sip_delay_minutes, **kw) or []
-    iex = _alpaca_premarket_bars(ticker, headers, "iex", 0, **kw) or []
-
+def _choose_pre_market(sip: list, iex: list, move_pct: float = 0.3, max_iex_gap_pct: float = 0.5) -> dict:
+    """Decide between delayed SIP bars and live IEX bars (see get_best_pre_market_price)."""
+    sip, iex = sip or [], iex or []
     d = {"price": None, "time": None, "source": None, "reason": "no pre-market data",
          "sip_price": None, "sip_time": None, "iex_price": None, "iex_time": None, "move_pct": None}
     if sip:
@@ -691,7 +752,73 @@ def get_best_pre_market_price(ticker: str, headers: dict | None = None, sip_dela
     for k in ("time", "sip_time", "iex_time"):
         if d[k] is not None:
             d[k] = d[k].strftime("%H:%M")
+    return d
+
+
+@_profiled("pre-market (Alpaca auto: 2 calls)")
+def get_best_pre_market_price(ticker: str, headers: dict | None = None, sip_delay_minutes: int = 16,
+                              move_pct: float = 0.3, max_iex_gap_pct: float = 0.5,
+                              tz: str = "America/New_York", start_hhmm: str = "04:00",
+                              open_hhmm: str = "09:30", timeout: float = 10.0,
+                              with_details: bool = False):
+    """Pick between delayed SIP (complete, ~16 min old) and live IEX (fresh,
+    but only IEX-exchange trades) for the pre-market price.
+
+    Decision, in order:
+      1. Only one feed has data            -> use that one.
+      2. IEX has no trade newer than SIP   -> SIP (IEX adds nothing fresher).
+      3. IEX disagreed with SIP at SIP's own timestamp by more than
+         max_iex_gap_pct                   -> SIP (IEX too thin/unreliable today).
+      4. Price moved >= move_pct from the SIP price to the latest IEX price
+                                           -> IEX (the market has moved since the
+                                              SIP snapshot, so the live price matters).
+      5. Otherwise (little movement)       -> SIP (full-market price, still accurate).
+
+    Returns the price (float) or None. with_details=True returns a dict:
+    {"price", "time", "source" ("sip"/"iex"), "reason", "sip_price", "sip_time",
+     "iex_price", "iex_time", "move_pct"} (price None if neither feed has data).
+    For many tickers use get_best_pre_market_prices() - same logic, 2 batched requests.
+    """
+    kw = dict(tz=tz, start_hhmm=start_hhmm, open_hhmm=open_hhmm, timeout=timeout)
+    sip = _alpaca_premarket_bars(ticker, headers, "sip", sip_delay_minutes, **kw)
+    iex = _alpaca_premarket_bars(ticker, headers, "iex", 0, **kw)
+    d = _choose_pre_market(sip, iex, move_pct, max_iex_gap_pct)
     return d if with_details else d["price"]
+
+
+@_profiled("pre-market (Alpaca batch, all tickers)")
+def get_best_pre_market_prices(tickers: list, headers: dict | None = None, sip_delay_minutes: int = 16,
+                               move_pct: float = 0.3, max_iex_gap_pct: float = 0.5,
+                               tz: str = "America/New_York", start_hhmm: str = "04:00",
+                               open_hhmm: str = "09:30") -> dict:
+    """get_best_pre_market_price(..., with_details=True) for MANY tickers, using
+    one batched SIP request and one batched IEX request (per 100 tickers).
+    Returns {ticker: details dict}; {} if both feeds failed."""
+    kw = dict(tz=tz, start_hhmm=start_hhmm, open_hhmm=open_hhmm)
+    sip = _alpaca_premarket_bars_multi(tickers, headers, "sip", sip_delay_minutes, **kw)
+    iex = _alpaca_premarket_bars_multi(tickers, headers, "iex", 0, **kw)
+    if sip is None and iex is None:
+        return {}
+    return {t: _choose_pre_market((sip or {}).get(t), (iex or {}).get(t), move_pct, max_iex_gap_pct)
+            for t in tickers}
+
+
+@_profiled("pre-market (Alpaca batch, all tickers)")
+def get_pre_market_prices(tickers: list, headers: dict | None = None, feed: str = "sip",
+                          delay_minutes: int = 16, tz: str = "America/New_York",
+                          start_hhmm: str = "04:00", open_hhmm: str = "09:30") -> dict:
+    """Latest pre-market price for MANY tickers from ONE feed, batched.
+    Returns {ticker: {"price", "time", "source", "reason"}}; {} on failure."""
+    bars = _alpaca_premarket_bars_multi(tickers, headers, feed, delay_minutes, tz, start_hhmm, open_hhmm)
+    if bars is None:
+        return {}
+    out = {}
+    for t in tickers:
+        b = bars.get(t) or []
+        out[t] = {"price": round(b[-1]["c"], 2) if b else None,
+                  "time": b[-1]["t"].strftime("%H:%M") if b else None,
+                  "source": feed if b else None, "reason": "fixed feed (ALPACA_FEED)"}
+    return out
 
 
 @_profiled("news (Finnhub)")
@@ -1012,7 +1139,8 @@ def generate_signal(daily: dict, h4: dict, h1: dict, h1_macd_ok: bool, vol_ok: b
 # ---------------------------------------------------------------- main
 
 def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
-               hourly: pd.DataFrame | None = None, social_table: dict | None = None) -> dict:
+               hourly: pd.DataFrame | None = None, social_table: dict | None = None,
+               pre_market_batch: dict | None = None) -> dict:
     """Fetch data and compute everything needed for one ticker's report.
     Pure computation - no printing - so the same result can feed both the
     console output and the HTML report."""
@@ -1086,7 +1214,14 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
     pre_market, pre_market_time, pre_market_info = None, None, None
-    if cfg.get("PREMARKET_ENABLED", True):
+    if cfg.get("PREMARKET_ENABLED", True) and pre_market_batch is not None:
+        # fetched for all tickers at once in main() - see prefetch_pre_market()
+        pre_market_info = pre_market_batch.get(cfg["TICKER"])
+        if pre_market_info and pre_market_info.get("price") is not None:
+            pre_market, pre_market_time = pre_market_info["price"], pre_market_info["time"]
+        else:
+            pre_market_info = None
+    elif cfg.get("PREMARKET_ENABLED", True):
         feed = cfg.get("ALPACA_FEED", "auto")
         pm_kw = dict(tz=cfg.get("MARKET_TZ", "America/New_York"),
                      start_hhmm=cfg.get("PREMARKET_START", "04:00"), open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
@@ -1132,12 +1267,32 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
 
     # One Finnhub call covers both the News row (last NEWS_DAYS) and the
     # buyback/guidance keyword scan (last CATALYST_NEWS_DAYS) - no Yahoo news call.
+    # Finnhub's free plan allows 60 calls/minute, so news is only fetched for the
+    # tickers that NEWS_FOR selects (default: shown in the _up report), and each
+    # ticker's result is reused for NEWS_CACHE_MIN minutes.
     news_days = cfg.get("NEWS_DAYS", 0)
     catalyst_days = cfg.get("CATALYST_NEWS_DAYS", 14)
-    news_all = fetch_company_news(tk, api_key=cfg.get("FINNHUB_API_KEY"),
-                                  days=max(news_days, catalyst_days), max_items=None,
-                                  tz=cfg.get("NEWS_TZ", "America/New_York"))
-    headlines = None if news_all is None else [(n["date"], n["headline"]) for n in news_all]
+    news_for = cfg.get("NEWS_FOR", "up")
+    will_be_shown = not all(report_filter_checks({"signal": signal, "analyst": analyst}).values())
+    if news_for == "none":
+        news_skipped = "news turned off (NEWS_FOR)"
+    elif not will_be_shown:
+        news_skipped = "ticker filtered out"
+    elif news_for == "up" and trend_dir != "up":
+        news_skipped = "not fetched for down-trend tickers"
+    else:
+        news_skipped = None
+
+    news_all = None
+    if news_skipped is None:
+        fetch_days = max(news_days, catalyst_days)
+        news_all = ttl_cached(
+            "news", f"{tk}_{fetch_days}",
+            lambda: fetch_company_news(tk, api_key=cfg.get("FINNHUB_API_KEY"), days=fetch_days,
+                                       max_items=None, tz=cfg.get("NEWS_TZ", "America/New_York")),
+            ttl_minutes=cfg.get("NEWS_CACHE_MIN", 60))
+    # skipped -> [] so event_catalysts doesn't fall back to a Yahoo news call
+    headlines = [] if news_skipped else (None if news_all is None else [(n["date"], n["headline"]) for n in news_all])
 
     catalysts = get_event_catalysts(tk, news_lookback_days=catalyst_days, sp500_members=sp500_members,
                                     yf_ticker=tkr, info=info, headlines=headlines,
@@ -1145,6 +1300,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
 
     news_cutoff = dt.date.today() - dt.timedelta(days=news_days)
     news = [n for n in (news_all or []) if n["date"] >= news_cutoff][:cfg.get("NEWS_MAX", 25)]
+    catalysts["news_skipped"] = news_skipped
 
     return {
         "ticker": cfg["TICKER"],
@@ -1695,7 +1851,8 @@ def render_ticker_html(report: dict) -> str:
                      f'<span class="when-open">Hide article{plural}</span></summary>'
                      f'<ul class="news-list">{li}</ul></details>')
     else:
-        news_cell = "none"
+        skipped = (report.get("catalysts") or {}).get("news_skipped")
+        news_cell = f'<span class="muted-small">{html.escape(skipped)}</span>' if skipped else "none"
     news_days = cfg.get("NEWS_DAYS", 0)
     news_label = "today" if news_days == 0 else f"last {news_days + 1} days"
     news_row = f"<tr><td>News ({len(news)}, {news_label})</td><td>{news_cell}</td></tr>"
@@ -1739,6 +1896,9 @@ def render_ticker_html(report: dict) -> str:
             return (shown + more) or "none"
         buyback_html = _head_list(buyback_headlines)
         guidance_html = _head_list(guidance_headlines)
+        if catalysts.get("news_skipped"):   # no headlines were scanned for this ticker
+            buyback_html = guidance_html = '<span class="muted-small">not checked (no news fetched)</span>'
+
 
         rating_actions = catalysts.get("rating_actions") or []
         rating_html = "<br>".join(html.escape(a) for a in rating_actions) or "none"
@@ -2053,6 +2213,7 @@ def main(tickers, fileapp):
     prune_cache()
     sp500_members = daily_cached("sp500", "all", lambda: _get_sp500_membership(verbose=False))
     social_table = fetch_apewisdom_table()   # once per run (mentions change intraday, so not cached)
+    pre_market_batch = prefetch_pre_market(tickers, CONFIGH)   # 2 batched Alpaca requests, not 2 per ticker
 
     try:
         prefetched = prefetch_hourly_data(tickers, CONFIGH["PERIOD"], CONFIGH["INTERVAL"])
@@ -2065,7 +2226,8 @@ def main(tickers, fileapp):
         try:
             t0 = time.perf_counter()
             report = run_screen(ticker, CONFIGH, sp500_members=sp500_members,
-                                hourly=prefetched.get(ticker), social_table=social_table)
+                                hourly=prefetched.get(ticker), social_table=social_table,
+                                pre_market_batch=pre_market_batch)
             elapsed = time.perf_counter() - t0
             _prof_add("whole ticker (run_screen)", ticker, elapsed)
             fetched = sum(sec for step, calls in list(PROFILE.items())
