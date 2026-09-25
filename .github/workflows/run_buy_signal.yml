@@ -81,5 +81,6 @@ jobs:
           name: BuySignal_Results_${{ env.DATE }}
           path: |
             data/*.xlsx
+            data/*.csv
             reports/*.html
           retention-days: 1
