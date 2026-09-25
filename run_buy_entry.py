@@ -146,5 +146,7 @@ def run_enrichment(num, runtype="all"):
 
 #num = 0 small
 runtype = "html"
+#run_enrichment(3, runtype)
+
 run_enrichment(0, runtype)
 run_enrichment(2, runtype)
