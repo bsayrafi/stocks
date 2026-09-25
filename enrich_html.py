@@ -133,17 +133,19 @@ def daily_cached(name: str, key: str, fn, is_valid=bool):
 
 def ttl_cached(name: str, key: str, fn, ttl_minutes: float, is_valid=lambda v: v is not None):
     """Like daily_cached, but a cached value is only reused while it is younger
-    than ttl_minutes (e.g. news: 60). Uses the same CACHE_DIR and daily pruning."""
+    than ttl_minutes (e.g. news: 60). The fetch time is stored INSIDE the cache
+    file, so the age stays correct even when the folder is copied or restored
+    (e.g. GitHub Actions' cache), which can reset file modification times."""
     if not CONFIGH.get("CACHE_ENABLED", True) or not ttl_minutes:
         return fn()
     path = _cache_path(name, key)
     try:
-        if time.time() - os.path.getmtime(path) < ttl_minutes * 60:
-            with open(path, "rb") as f:
-                value = pickle.load(f)
+        with open(path, "rb") as f:
+            saved_at, value = pickle.load(f)
+        if time.time() - saved_at < ttl_minutes * 60:
             _prof_add("  cache hits (read from disk)", key, 0.0)
             return value
-    except (OSError, pickle.PickleError, EOFError):
+    except (OSError, pickle.PickleError, EOFError, TypeError, ValueError):
         pass
     value = fn()
     if is_valid(value):
@@ -151,7 +153,7 @@ def ttl_cached(name: str, key: str, fn, ttl_minutes: float, is_valid=lambda v: v
             os.makedirs(os.path.dirname(path), exist_ok=True)
             tmp = f"{path}.{threading.get_ident()}.tmp"
             with open(tmp, "wb") as f:
-                pickle.dump(value, f)
+                pickle.dump((time.time(), value), f)
             os.replace(tmp, path)
         except OSError:
             pass
@@ -279,6 +281,7 @@ CONFIGH = {
     "SCORE_THRESHOLD": 3,          # out of 5 soft conditions
 
     # HTML report price chart (display only, not part of the signal)
+    "CSV_REPORT": True,            # also write reports/<name>_signal_report_<timestamp>.csv (1 row per ticker)
     "PROFILE": True,               # print a timing breakdown at the end of main()
     "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
     "CACHE_ENABLED": True,         # cache once-a-day data (.info, analyst, earnings...) on disk
@@ -1329,6 +1332,8 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         "pre_market_time": pre_market_time,
         "pre_market_info": pre_market_info,
         "news": news,
+        # raw (unformatted) yfinance values behind the Fundamentals table, for the CSV
+        "fund_raw": {key: info.get(key) for _, key, _ in FUNDAMENTAL_FIELDS} if info else {},
     }
 
 
@@ -2176,6 +2181,148 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
 """
 
 
+def _snake(label: str) -> str:
+    """'Price/Sales (TTM)' -> 'price_sales_ttm'"""
+    out = "".join(c.lower() if c.isalnum() else "_" for c in label.replace("%", " pct "))
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out.strip("_")
+
+
+def report_to_row(report: dict, report_group: str) -> dict:
+    """Flatten one ticker's report into a single CSV row (column -> value).
+    Lists of text (news, buyback/guidance headlines, rating actions) keep only
+    the LATEST item plus a count. report_group is "up", "down" or "filtered"."""
+    cfg = report["cfg"]
+    sig = report["signal"]
+    row = {
+        "ticker": report["ticker"],
+        "report": report_group,
+        "signal": sig["signal"],
+        "current_price": report["current_price"],
+    }
+
+    # --- pre-market
+    pm = report.get("pre_market_info") or {}
+    pre = report.get("pre_market")
+    row.update({
+        "pre_market": pre,
+        "pre_market_time_et": report.get("pre_market_time"),
+        "pre_market_source": pm.get("source"),
+        "pre_market_gap_pct": round((pre / report["current_price"] - 1) * 100, 2) if pre else None,
+        "pre_market_reason": pm.get("reason") if pre else None,
+    })
+
+    # --- signal breakdown
+    row["hard_requirements_met"] = sig["hard_requirements_met"]
+    for k, v in sig["hard_requirements_detail"].items():
+        row[f"hard_{k}"] = v
+    row["structural_confirmation"] = sig["structural_confirmation"]
+    scd = sig["structural_confirmation_detail"]
+    row["structural_daily_pattern"] = scd["daily_bullish_pattern"]
+    row["structural_4h_pattern"] = scd["4h_bullish_pattern"]
+    row["soft_score"] = int(str(sig["soft_score"]).split("/")[0])
+    for k in ("1h_not_overbought", "1h_macd_bullish", "volume_confirmed", "near_support", "1h_bullish_pattern"):
+        row[f"soft_{k}"] = sig.get(k)
+    fails = report_filter_checks(report)
+    row["filter_checks_failed"] = sum(fails.values())
+    for k, v in fails.items():
+        row[f"fails_{k}"] = v
+
+    # --- per timeframe (d1_ = daily, h4_ = 4-hour, h1_ = 1-hour)
+    ma_lbl = f"{cfg['MA_TYPE']}{cfg['MA_PERIOD']}"
+    for tf, pre_tf in (("1D", "d1"), ("4h", "h4"), ("1h", "h1")):
+        r, sr = report["results"][tf], report["sr_levels"][tf]
+        row.update({
+            f"{pre_tf}_close": r["close"], f"{pre_tf}_{ma_lbl}": r["MA"], f"{pre_tf}_trend_up": r["trend_up"],
+            f"{pre_tf}_stoch_k": r["%K"], f"{pre_tf}_stoch_d": r["%D"], f"{pre_tf}_k_above_d": r["k_above_d"],
+            f"{pre_tf}_stoch_bullish": r["stoch_bullish"], f"{pre_tf}_overbought": r["overbought"],
+            f"{pre_tf}_patterns": ";".join(r["patterns_detected"]),
+            f"{pre_tf}_support": sr["support"], f"{pre_tf}_resistance": sr["resistance"],
+        })
+
+    # --- levels
+    tr = report["today_range"]
+    atr = report.get("daily_atr")
+    row.update({
+        "today_low": tr["day_low"], "today_high": tr["day_high"], "today_range": tr["day_range"],
+        "daily_atr": atr,
+        "atr_used_today_pct": round(tr["day_range"] / atr * 100, 1) if atr else None,
+        "atr_projected_low": round(tr["day_high"] - atr, 2) if atr else None,
+        "atr_projected_high": round(tr["day_low"] + atr, 2) if atr else None,
+        "entry_support_1h": report["entry_support"],
+        "stop": report["stop"], "take_profit": report["take_profit"],
+        "poc": report.get("poc"), "vwap": report.get("vwap"), "above_vwap": report.get("above_vwap"),
+    })
+    lrc = report.get("lrc") or {}
+    row.update({
+        "trend_dir": report.get("trend_dir"),
+        "channel_lower": lrc.get("last_lower"), "channel_mid": lrc.get("last_mid"),
+        "channel_upper": lrc.get("last_upper"), "channel_slope_pct_day": lrc.get("slope_pct_per_day"),
+        "channel_r2": lrc.get("r2"), "channel_position_pct": lrc.get("position_pct"),
+    })
+
+    # --- fundamentals (raw yfinance values: ratios as fractions, e.g. 0.25 = 25%)
+    raw = report.get("fund_raw") or {}
+    for label, key, _ in FUNDAMENTAL_FIELDS:
+        row[_snake(label)] = raw.get(key)
+    lo52, hi52 = raw.get("fiftyTwoWeekLow"), raw.get("fiftyTwoWeekHigh")
+    row["pos_in_52w_range_pct"] = (round((report["current_price"] - lo52) / (hi52 - lo52) * 100, 1)
+                                  if isinstance(lo52, (int, float)) and isinstance(hi52, (int, float)) and hi52 > lo52
+                                  else None)
+
+    # --- analyst
+    an = report.get("analyst") or {}
+    row.update({
+        "analyst_consensus": an.get("recommendation_key"), "analyst_mean_score": an.get("recommendation_mean"),
+        "analyst_opinions": an.get("num_analyst_opinions"),
+    })
+    for label, n in (an.get("recommendation_counts") or {}).items():
+        row[f"analyst_{_snake(label)}"] = n
+    row.update({
+        "eps_current": an.get("eps_current"), "eps_30d_ago": an.get("eps_30d_ago"),
+        "eps_improving": an.get("eps_improving"), "eps_num_analysts": an.get("eps_num_analysts"),
+    })
+
+    # --- catalysts (latest item only for text lists)
+    cat = report.get("catalysts") or {}
+    actions = sorted(cat.get("rating_actions") or [], reverse=True)   # strings start with the ISO date
+    buy, guid = cat.get("buyback_headlines") or [], cat.get("guidance_headlines") or []
+    row.update({
+        "next_earnings_date": cat.get("next_earnings_date"), "days_to_earnings": cat.get("days_to_earnings"),
+        "in_earnings_window": cat.get("in_earnings_window"),
+        "in_sp500": cat.get("in_sp500"), "sp500_added_date": cat.get("sp500_added_date"),
+        "upgrades": cat.get("upgrades"), "downgrades": cat.get("downgrades"),
+        "latest_rating_action": actions[0] if actions else None,
+        "buyback_headlines_count": len(buy), "latest_buyback_headline": buy[0] if buy else None,
+        "guidance_headlines_count": len(guid), "latest_guidance_headline": guid[0] if guid else None,
+        "reddit_rank": cat.get("social_rank"), "reddit_mentions": cat.get("social_mentions"),
+        "reddit_momentum_pct_24h": cat.get("social_momentum_pct"), "reddit_upvotes": cat.get("social_upvotes"),
+    })
+
+    # --- news (latest article only)
+    news = report.get("news") or []
+    row.update({
+        "news_count": len(news),
+        "latest_news_time": news[0]["time"] if news else None,
+        "latest_news_headline": news[0]["headline"] if news else None,
+        "latest_news_url": news[0]["url"] if news else None,
+        "news_not_fetched_reason": cat.get("news_skipped"),
+        "error": None,
+    })
+    return row
+
+
+def write_csv_report(rows: list, out_path: str) -> None:
+    """One row per ticker. utf-8-sig so Excel shows non-ASCII headlines correctly."""
+    if not rows:
+        return
+    full = next((r for r in rows if r.get("error") is None), rows[0])
+    cols = list(full.keys())
+    cols += [c for r in rows for c in r if c not in cols]   # any extra columns (e.g. error-only rows)
+    pd.DataFrame(rows, columns=list(dict.fromkeys(cols))).to_csv(out_path, index=False, encoding="utf-8-sig")
+
+
 def report_filter_checks(report: dict) -> dict:
     """The four report-inclusion checks. Each value is True if the ticker FAILS
     that check. A ticker is left out of the HTML only when it fails ALL four."""
@@ -2222,7 +2369,7 @@ def main(tickers, fileapp):
         prefetched = {}
 
     def screen_one(ticker):
-        """Runs in a worker thread. Returns ("ok", direction, html) or ("skip", reason)."""
+        """Runs in a worker thread. Returns (status, direction_or_reason, html, csv_row)."""
         try:
             t0 = time.perf_counter()
             report = run_screen(ticker, CONFIGH, sp500_members=sp500_members,
@@ -2239,17 +2386,20 @@ def main(tickers, fileapp):
             if all(fails.values()):
                 print(f"=== {ticker}: filtered out (fails all 4 checks) ===")
                 return ("skip", "filtered out - fails all 4 checks (hard <3/4, no pattern, "
-                                "soft <2, EPS deteriorating)")
-            return ("ok", report["trend_dir"], render_ticker_html(report))
+                                "soft <2, EPS deteriorating)", None, report_to_row(report, "filtered"))
+            return ("ok", report["trend_dir"], render_ticker_html(report),
+                    report_to_row(report, report["trend_dir"]))
         except Exception as e:
             print(f"\n=== {ticker}: skipped due to error ===")
             print(f"  {type(e).__name__}: {e}")
-            return ("skip", f"error - {type(e).__name__}: {e}")
+            return ("skip", f"error - {type(e).__name__}: {e}", None,
+                    {"ticker": ticker, "report": "error", "error": f"{type(e).__name__}: {e}"})
 
     # executor.map keeps results in the same order as `tickers`
     with ThreadPoolExecutor(max_workers=max(1, int(CONFIGH.get("MAX_WORKERS", 4)))) as ex:
         results = list(ex.map(screen_one, tickers))
 
+    csv_rows = [res[3] for res in results if res[3] is not None]
     for ticker, res in zip(tickers, results):
         if res[0] == "ok":
             sections[res[1]].append(res[2])
@@ -2268,6 +2418,14 @@ def main(tickers, fileapp):
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
         print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
+
+    if CONFIGH.get("CSV_REPORT", True):
+        csv_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}.csv")
+        try:
+            write_csv_report(csv_rows, csv_path)
+            print(f"CSV report ({len(csv_rows)} rows) written to {csv_path}")
+        except Exception as e:
+            print(f"CSV report failed: {type(e).__name__}: {e}")
 
     if CONFIGH.get("PROFILE", True):
         print_profile_summary(time.perf_counter() - run_t0, len(tickers))
