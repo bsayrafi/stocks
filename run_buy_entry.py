@@ -52,12 +52,19 @@ large_enrichment_tickers = [
 ]
 
 
+debug_enrichment_tickers = [
+
+    "A", "AAPL"
+    ]
+
 def run_enrichment(num, runtype="all"):
     enrichment_tickers = []
     if num==0:
         enrichment_tickers = small_enrichment_tickers
-    else:
+    elif num==2:
         enrichment_tickers = large_enrichment_tickers
+    elif num==3:
+        enrichment_tickers = debug_enrichment_tickers
     
     
     

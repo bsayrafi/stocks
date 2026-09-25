@@ -129,6 +129,11 @@ CONFIG = {
     "EARNINGS_EXCLUSION_DAYS": 3,    # exclude tickers within N days of an earnings event (past or future)
     "DIP_QUALITY_MIN_SCORE": 50,     # minimum fundamental quality score (0-100) to qualify as a "quality dip"
    
+    "ALPACA_HEADERS": {
+        "APCA-API-KEY-ID": "PKGT4VDNU6I3UJVRNUFYT34PK2",        # your API key
+        "APCA-API-SECRET-KEY": "E9zQAKbXS5ATHJ399iqPGq5GaYqdKQq6DQDjcKrQQQDx", # your secret
+    },
+    "FINNHUB_API_KEY": "dafflm1r01quvmmfau5gdafflm1r01quvmmfau60",
 }
 
 def set_pkl_path(size=0):

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Large_Signal Report Sep_25th_09_26_down</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e6e6;
+    --muted: #9aa4b2;
+    --accent: #9cdcfe;
+    --pass: #2ecc71;
+    --fail: #e74c3c;
+    --buy: #2ecc71;
+    --wait: #556070;
+    --ma0: #c39bd3;  /* EMA9  */
+    --ma1: #f5b041;
+    --ma2: #48c9b0;
+    --ma3: #85c1e9;
+    --poc: #ff79c6;
+    --vwap: #ffffff;
+    --premkt: #ffe600;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0; padding: 32px;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 20px; color: var(--accent); margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 24px; margin-bottom: 24px;
+  }
+  .card-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .card-header h2 { margin: 0; font-size: 18px; }
+  .price { color: var(--muted); font-size: 15px; }
+  .signal-badge {
+    margin-left: auto; padding: 6px 14px; border-radius: 999px; font-weight: 700;
+    font-size: 13px; letter-spacing: 0.04em;
+  }
+  .signal-badge.buy { background: rgba(46,204,113,0.15); color: var(--buy); border: 1px solid var(--buy); }
+  .signal-badge.wait { background: rgba(85,96,112,0.25); color: var(--muted); border: 1px solid var(--border); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
+  .tf-table { margin-bottom: 20px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  h3 { font-size: 13px; color: var(--accent); margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .detail-table td:first-child { color: var(--text); }
+  .fundamentals-table { margin-bottom: 18px; }
+  .four-col { table-layout: fixed; margin-bottom: 18px; }
+  .four-col col.c-lbl { width: 30%; }
+  .four-col col.c-val { width: 20%; }
+  .four-col td:nth-child(odd) { color: var(--muted); }
+  .four-col td:nth-child(2) { border-right: 1px solid var(--border); padding-right: 16px; }
+  .four-col td:nth-child(3) { padding-left: 16px; }
+  .four-col td { overflow-wrap: anywhere; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px;
+    font-weight: 700; letter-spacing: 0.03em;
+  }
+  .badge.pass { background: rgba(46,204,113,0.15); color: var(--pass); }
+  .badge.fail { background: rgba(231,76,60,0.15); color: var(--fail); }
+
+  /* ---- 7-day price chart */
+  .chart-wrap { margin: 4px 0 20px; }
+  .chart-toggle { margin: 0 0 12px; }
+  .chart-toggle summary { list-style: none; cursor: pointer; color: var(--accent);
+                           font-size: 12px; display: inline-block; margin-bottom: 6px; user-select: none; }
+  .news-toggle summary { cursor: pointer; color: var(--accent); user-select: none; }
+  .news-toggle summary:hover { text-decoration: underline; }
+  .news-list { list-style: none; margin: 8px 0 2px; padding: 0; }
+  .news-list li { padding: 4px 0; border-bottom: 1px solid var(--border); line-height: 1.4; }
+  .news-list li:last-child { border-bottom: none; }
+  .news-time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 10px; white-space: nowrap; }
+  .news-list a { color: var(--text); text-decoration: none; }
+  .news-list a:hover { color: var(--accent); text-decoration: underline; }
+  .chart-toggle summary::-webkit-details-marker { display: none; }
+  .chart-toggle summary:hover { text-decoration: underline; }
+  .chart-toggle .when-open, .news-toggle .when-open { display: none; }
+  .chart-toggle[open] .when-open, .news-toggle[open] .when-open { display: inline; }
+  .chart-toggle[open] .when-closed, .news-toggle[open] .when-closed { display: none; }
+  .chart-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                 color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .chart-head .legend { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .sw { display: inline-block; width: 14px; height: 0; border-top: 2px dashed; margin-left: 8px; }
+  .sw.ma-sw { border-top-style: solid; }
+  .sw.ma-0 { border-color: var(--ma0); } .sw.ma-1 { border-color: var(--ma1); }
+  .sw.ma-2 { border-color: var(--ma2); } .sw.ma-3 { border-color: var(--ma3); }
+  .sw.lvl-poc { border-color: var(--poc); }
+  .sw.session-sw { border-top: 2px dotted var(--text); }
+  .sw.lvl-support { border-color: var(--accent); }
+  .sw.lvl-stop { border-color: var(--fail); }
+  .sw.lvl-target { border-color: var(--pass); }
+  .price-chart { width: 100%; height: auto; display: block; }  /* keeps aspect ratio, so text isn't stretched */
+  .price-chart .grid { stroke: var(--muted); stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 1 4; }
+  .price-chart .tick { stroke: var(--muted); stroke-width: 1; }
+  .price-chart .axis { fill: var(--muted); font-size: 10px; }
+  .price-chart .candle line { stroke-width: 1; }
+  .price-chart .candle.up line { stroke: var(--pass); }
+  .price-chart .candle.down line { stroke: var(--fail); }
+  .price-chart .candle.up rect { fill: var(--pass); }
+  .price-chart .candle.down rect { fill: var(--fail); }
+  .price-chart .candle:hover rect { opacity: 0.7; }
+  .price-chart .vol.up { fill: rgba(46,204,113,0.35); }
+  .price-chart .vol.down { fill: rgba(231,76,60,0.35); }
+  .price-chart .ma { fill: none; stroke-width: 1.5; }
+  .price-chart .ma.ma-0 { stroke: var(--ma0); } .price-chart .ma.ma-1 { stroke: var(--ma1); }
+  .price-chart .ma.ma-2 { stroke: var(--ma2); } .price-chart .ma.ma-3 { stroke: var(--ma3); }
+  .price-chart .session { stroke: #ffffff; stroke-opacity: 0.55; stroke-width: 1; stroke-dasharray: 1 3; }
+  .price-chart .lvl.lvl-poc { stroke: var(--poc); }
+  .price-chart .lvl-label.lvl-poc { fill: var(--poc); }
+  .price-chart .vwap { fill: none; stroke: var(--vwap); stroke-width: 1.8; stroke-opacity: 0.9; }
+  .price-chart .lvl-label.lvl-vwap { fill: var(--vwap); }
+  .sw.vwap-sw { border-color: var(--vwap); }
+  .sw.premkt-sw { border-top: 2px dotted var(--premkt); }
+  .price-chart .lvl.lvl-premkt { stroke: var(--premkt); stroke-width: 1.5; stroke-dasharray: 2 4; }
+  .price-chart .lvl-label.lvl-premkt { fill: var(--premkt); }
+  .sw.lrc-sw { border-top: 6px solid rgba(154,164,178,0.25); height: 0; }
+  .price-chart .lrc-fill { fill: var(--muted); fill-opacity: 0.07; }
+  .price-chart .lrc-band { fill: none; stroke: var(--muted); stroke-opacity: 0.6; stroke-width: 1; }
+  .price-chart .lrc-mid { fill: none; stroke: var(--muted); stroke-opacity: 0.8; stroke-width: 1; stroke-dasharray: 6 4; }
+  .price-chart .lvl { stroke-width: 1; stroke-dasharray: 5 4; }
+  .price-chart .lvl.lvl-support { stroke: var(--accent); }
+  .price-chart .lvl.lvl-stop { stroke: var(--fail); }
+  .price-chart .lvl.lvl-target { stroke: var(--pass); }
+  .price-chart .lvl-label { font-size: 11px; font-weight: 600; }
+  .price-chart .lvl-label.lvl-support { fill: var(--accent); }
+  .price-chart .lvl-label.lvl-stop { fill: var(--fail); }
+  .price-chart .lvl-label.lvl-target { fill: var(--pass); }
+  .price-chart .last { fill: var(--text); }
+</style>
+</head>
+<body>
+<h1>Large_Signal Report Sep_25th_09_26_down</h1>
+<div class="subtitle">Multi-Timeframe Buy Signal Screener</div>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>ABNB</h2>
+        <div class="price">$151.36</div>
+        <div class="signal-badge wait">WAIT</div>
+      </div>
+      
+      <details class="chart-toggle">
+        <summary><span class="when-closed">&#9656; Show chart</span><span class="when-open">&#9662; Hide chart</span></summary>
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <span>Last 7 trading days &middot; 1h candles</span>
+          <span class="badge fail">-9.63%</span>
+          <span class="legend"><i class="sw ma-sw ma-0"></i>EMA9 <i class="sw ma-sw ma-1"></i>EMA50 <i class="sw ma-sw vwap-sw"></i>VWAP
+            <i class="sw lvl-poc"></i>POC <i class="sw lvl-support"></i>1h support
+            <i class="sw lvl-stop"></i>Stop <i class="sw lvl-target"></i>Target
+            <i class="sw session-sw"></i>Open/close <i class="sw lrc-sw"></i>Reg. channel</span>
+        </div>
+        <svg class="price-chart" viewBox="0 0 1000 654"
+             role="img" aria-label="ABNB 7-day price chart">
+          <line class="grid" x1="56" x2="840" y1="497.6" y2="497.6"/><line class="tick" x1="840" x2="844" y1="497.6" y2="497.6"/><text class="axis" x="50" y="500.6" text-anchor="end">145</text><text class="axis" x="847" y="500.6">145</text><line class="grid" x1="56" x2="840" y1="427.7" y2="427.7"/><line class="tick" x1="840" x2="844" y1="427.7" y2="427.7"/><text class="axis" x="50" y="430.7" text-anchor="end">150</text><text class="axis" x="847" y="430.7">150</text><line class="grid" x1="56" x2="840" y1="357.8" y2="357.8"/><line class="tick" x1="840" x2="844" y1="357.8" y2="357.8"/><text class="axis" x="50" y="360.8" text-anchor="end">155</text><text class="axis" x="847" y="360.8">155</text><line class="grid" x1="56" x2="840" y1="287.9" y2="287.9"/><line class="tick" x1="840" x2="844" y1="287.9" y2="287.9"/><text class="axis" x="50" y="290.9" text-anchor="end">160</text><text class="axis" x="847" y="290.9">160</text><line class="grid" x1="56" x2="840" y1="218.0" y2="218.0"/><line class="tick" x1="840" x2="844" y1="218.0" y2="218.0"/><text class="axis" x="50" y="221.0" text-anchor="end">165</text><text class="axis" x="847" y="221.0">165</text><line class="grid" x1="56" x2="840" y1="148.1" y2="148.1"/><line class="tick" x1="840" x2="844" y1="148.1" y2="148.1"/><text class="axis" x="50" y="151.1" text-anchor="end">170</text><text class="axis" x="847" y="151.1">170</text><line class="grid" x1="56" x2="840" y1="78.2" y2="78.2"/><line class="tick" x1="840" x2="844" y1="78.2" y2="78.2"/><text class="axis" x="50" y="81.2" text-anchor="end">175</text><text class="axis" x="847" y="81.2">175</text><line class="tick" x1="840" x2="840" y1="10" y2="510"/><text class="axis" x="58.0" y="648">Wed 16 Sep</text><line class="session" x1="56.0" x2="56.0" y1="10" y2="632"><title>Market open Wed 16 Sep</title></line><line class="session" x1="158.0" x2="158.0" y1="10" y2="632"><title>Market close Wed 16 Sep</title></line><text class="axis" x="171.7" y="648">Thu 17 Sep</text><line class="session" x1="169.7" x2="169.7" y1="10" y2="632"><title>Market open Thu 17 Sep</title></line><line class="session" x1="271.7" x2="271.7" y1="10" y2="632"><title>Market close Thu 17 Sep</title></line><text class="axis" x="285.3" y="648">Fri 18 Sep</text><line class="session" x1="283.3" x2="283.3" y1="10" y2="632"><title>Market open Fri 18 Sep</title></line><line class="session" x1="385.3" x2="385.3" y1="10" y2="632"><title>Market close Fri 18 Sep</title></line><text class="axis" x="399.0" y="648">Mon 21 Sep</text><line class="session" x1="397.0" x2="397.0" y1="10" y2="632"><title>Market open Mon 21 Sep</title></line><line class="session" x1="499.0" x2="499.0" y1="10" y2="632"><title>Market close Mon 21 Sep</title></line><text class="axis" x="512.7" y="648">Tue 22 Sep</text><line class="session" x1="510.7" x2="510.7" y1="10" y2="632"><title>Market open Tue 22 Sep</title></line><line class="session" x1="612.7" x2="612.7" y1="10" y2="632"><title>Market close Tue 22 Sep</title></line><text class="axis" x="626.3" y="648">Wed 23 Sep</text><line class="session" x1="624.3" x2="624.3" y1="10" y2="632"><title>Market open Wed 23 Sep</title></line><line class="session" x1="726.3" x2="726.3" y1="10" y2="632"><title>Market close Wed 23 Sep</title></line><text class="axis" x="740.0" y="648">Thu 24 Sep</text><line class="session" x1="738.0" x2="738.0" y1="10" y2="632"><title>Market open Thu 24 Sep</title></line><line class="session" x1="840.0" x2="840.0" y1="10" y2="632"><title>Market close Thu 24 Sep</title></line><polygon class="lrc-fill" points="63.3,28.5 77.9,34.5 92.4,40.4 107.0,46.4 121.6,52.4 136.1,58.3 150.7,64.3 177.0,70.2 191.5,76.2 206.1,82.2 220.7,88.1 235.2,94.1 249.8,100.0 264.4,106.0 290.6,111.9 305.2,117.9 319.8,123.9 334.3,129.8 348.9,135.8 363.5,141.7 378.1,147.7 404.3,153.7 418.9,159.6 433.4,165.6 448.0,171.5 462.6,177.5 477.1,183.5 491.7,189.4 517.9,195.4 532.5,201.3 547.1,207.3 561.7,213.3 576.2,219.2 590.8,225.2 605.4,231.1 631.6,237.1 646.2,243.1 660.8,249.0 675.3,255.0 689.9,260.9 704.5,266.9 719.0,272.9 745.3,278.8 759.9,284.8 774.4,290.7 789.0,296.7 803.6,302.6 818.1,308.6 832.7,314.6 832.7,491.5 818.1,485.5 803.6,479.6 789.0,473.6 774.4,467.6 759.9,461.7 745.3,455.7 719.0,449.8 704.5,443.8 689.9,437.8 675.3,431.9 660.8,425.9 646.2,420.0 631.6,414.0 605.4,408.1 590.8,402.1 576.2,396.1 561.7,390.2 547.1,384.2 532.5,378.3 517.9,372.3 491.7,366.3 477.1,360.4 462.6,354.4 448.0,348.5 433.4,342.5 418.9,336.5 404.3,330.6 378.1,324.6 363.5,318.7 348.9,312.7 334.3,306.7 319.8,300.8 305.2,294.8 290.6,288.9 264.4,282.9 249.8,276.9 235.2,271.0 220.7,265.0 206.1,259.1 191.5,253.1 177.0,247.1 150.7,241.2 136.1,235.2 121.6,229.3 107.0,223.3 92.4,217.4 77.9,211.4 63.3,205.4"/><polyline class="lrc-band" points="63.3,28.5 77.9,34.5 92.4,40.4 107.0,46.4 121.6,52.4 136.1,58.3 150.7,64.3 177.0,70.2 191.5,76.2 206.1,82.2 220.7,88.1 235.2,94.1 249.8,100.0 264.4,106.0 290.6,111.9 305.2,117.9 319.8,123.9 334.3,129.8 348.9,135.8 363.5,141.7 378.1,147.7 404.3,153.7 418.9,159.6 433.4,165.6 448.0,171.5 462.6,177.5 477.1,183.5 491.7,189.4 517.9,195.4 532.5,201.3 547.1,207.3 561.7,213.3 576.2,219.2 590.8,225.2 605.4,231.1 631.6,237.1 646.2,243.1 660.8,249.0 675.3,255.0 689.9,260.9 704.5,266.9 719.0,272.9 745.3,278.8 759.9,284.8 774.4,290.7 789.0,296.7 803.6,302.6 818.1,308.6 832.7,314.6"/><polyline class="lrc-band" points="63.3,205.4 77.9,211.4 92.4,217.4 107.0,223.3 121.6,229.3 136.1,235.2 150.7,241.2 177.0,247.1 191.5,253.1 206.1,259.1 220.7,265.0 235.2,271.0 249.8,276.9 264.4,282.9 290.6,288.9 305.2,294.8 319.8,300.8 334.3,306.7 348.9,312.7 363.5,318.7 378.1,324.6 404.3,330.6 418.9,336.5 433.4,342.5 448.0,348.5 462.6,354.4 477.1,360.4 491.7,366.3 517.9,372.3 532.5,378.3 547.1,384.2 561.7,390.2 576.2,396.1 590.8,402.1 605.4,408.1 631.6,414.0 646.2,420.0 660.8,425.9 675.3,431.9 689.9,437.8 704.5,443.8 719.0,449.8 745.3,455.7 759.9,461.7 774.4,467.6 789.0,473.6 803.6,479.6 818.1,485.5 832.7,491.5"/><polyline class="lrc-mid" points="63.3,117.0 77.9,122.9 92.4,128.9 107.0,134.9 121.6,140.8 136.1,146.8 150.7,152.7 177.0,158.7 191.5,164.7 206.1,170.6 220.7,176.6 235.2,182.5 249.8,188.5 264.4,194.4 290.6,200.4 305.2,206.4 319.8,212.3 334.3,218.3 348.9,224.2 363.5,230.2 378.1,236.2 404.3,242.1 418.9,248.1 433.4,254.0 448.0,260.0 462.6,266.0 477.1,271.9 491.7,277.9 517.9,283.8 532.5,289.8 547.1,295.8 561.7,301.7 576.2,307.7 590.8,313.6 605.4,319.6 631.6,325.6 646.2,331.5 660.8,337.5 675.3,343.4 689.9,349.4 704.5,355.3 719.0,361.3 745.3,367.3 759.9,373.2 774.4,379.2 789.0,385.1 803.6,391.1 818.1,397.1 832.7,403.0"/><rect class="vol up" x="58.8" y="611.7" width="9.0" height="20.3"/><rect class="vol down" x="73.3" y="620.1" width="9.0" height="11.9"/><rect class="vol up" x="87.9" y="617.9" width="9.0" height="14.1"/><rect class="vol down" x="102.5" y="620.4" width="9.0" height="11.6"/><rect class="vol down" x="117.1" y="624.0" width="9.0" height="8.0"/><rect class="vol down" x="131.6" y="618.4" width="9.0" height="13.6"/><rect class="vol up" x="146.2" y="614.7" width="9.0" height="17.3"/><rect class="vol down" x="172.4" y="615.6" width="9.0" height="16.4"/><rect class="vol down" x="187.0" y="622.2" width="9.0" height="9.8"/><rect class="vol down" x="201.6" y="626.2" width="9.0" height="5.8"/><rect class="vol down" x="216.2" y="625.5" width="9.0" height="6.5"/><rect class="vol down" x="230.7" y="625.6" width="9.0" height="6.4"/><rect class="vol down" x="245.3" y="620.4" width="9.0" height="11.6"/><rect class="vol up" x="259.9" y="615.0" width="9.0" height="17.0"/><rect class="vol down" x="286.1" y="593.5" width="9.0" height="38.5"/><rect class="vol up" x="300.7" y="620.8" width="9.0" height="11.2"/><rect class="vol up" x="315.2" y="621.9" width="9.0" height="10.1"/><rect class="vol down" x="329.8" y="624.8" width="9.0" height="7.2"/><rect class="vol up" x="344.4" y="623.6" width="9.0" height="8.4"/><rect class="vol up" x="359.0" y="617.7" width="9.0" height="14.3"/><rect class="vol down" x="373.5" y="595.2" width="9.0" height="36.8"/><rect class="vol down" x="399.8" y="615.1" width="9.0" height="16.9"/><rect class="vol down" x="414.3" y="622.4" width="9.0" height="9.6"/><rect class="vol up" x="428.9" y="622.9" width="9.0" height="9.1"/><rect class="vol up" x="443.5" y="625.0" width="9.0" height="7.0"/><rect class="vol up" x="458.1" y="622.2" width="9.0" height="9.8"/><rect class="vol up" x="472.6" y="617.3" width="9.0" height="14.7"/><rect class="vol down" x="487.2" y="609.6" width="9.0" height="22.4"/><rect class="vol down" x="513.4" y="616.1" width="9.0" height="15.9"/><rect class="vol down" x="528.0" y="609.8" width="9.0" height="22.2"/><rect class="vol up" x="542.6" y="619.5" width="9.0" height="12.5"/><rect class="vol down" x="557.1" y="623.6" width="9.0" height="8.4"/><rect class="vol down" x="571.7" y="613.9" width="9.0" height="18.1"/><rect class="vol down" x="586.3" y="605.7" width="9.0" height="26.3"/><rect class="vol up" x="600.9" y="583.8" width="9.0" height="48.2"/><rect class="vol down" x="627.1" y="564.8" width="9.0" height="67.2"/><rect class="vol down" x="641.7" y="592.1" width="9.0" height="39.9"/><rect class="vol up" x="656.2" y="551.1" width="9.0" height="80.9"/><rect class="vol down" x="670.8" y="587.1" width="9.0" height="44.9"/><rect class="vol down" x="685.4" y="577.5" width="9.0" height="54.5"/><rect class="vol down" x="700.0" y="564.9" width="9.0" height="67.1"/><rect class="vol down" x="714.5" y="522.0" width="9.0" height="110.0"/><rect class="vol up" x="740.8" y="575.2" width="9.0" height="56.8"/><rect class="vol down" x="755.3" y="607.6" width="9.0" height="24.4"/><rect class="vol down" x="769.9" y="600.1" width="9.0" height="31.9"/><rect class="vol down" x="784.5" y="603.8" width="9.0" height="28.2"/><rect class="vol down" x="799.1" y="594.8" width="9.0" height="37.2"/><rect class="vol up" x="813.6" y="598.5" width="9.0" height="33.5"/><rect class="vol up" x="828.2" y="588.3" width="9.0" height="43.7"/><g class="candle up"><title>Wed 16 Sep 09:30  O 167.49  H 169.59  L 166.82  C 169.42  Vol 492,422</title><line x1="63.3" x2="63.3" y1="153.8" y2="192.5"/><rect x="58.8" y="156.2" width="9.0" height="27.0"/></g><g class="candle down"><title>Wed 16 Sep 10:30  O 169.53  H 170.13  L 168.81  C 169.36  Vol 289,457</title><line x1="77.9" x2="77.9" y1="146.3" y2="164.7"/><rect x="73.3" y="154.7" width="9.0" height="2.4"/></g><g class="candle up"><title>Wed 16 Sep 11:30  O 169.38  H 170.53  L 169.13  C 169.88  Vol 342,676</title><line x1="92.4" x2="92.4" y1="140.7" y2="160.2"/><rect x="87.9" y="149.8" width="9.0" height="7.0"/></g><g class="candle down"><title>Wed 16 Sep 12:30  O 169.90  H 170.12  L 168.94  C 169.18  Vol 282,599</title><line x1="107.0" x2="107.0" y1="146.3" y2="162.9"/><rect x="102.5" y="149.5" width="9.0" height="10.0"/></g><g class="candle down"><title>Wed 16 Sep 13:30  O 169.10  H 169.10  L 168.31  C 168.79  Vol 193,490</title><line x1="121.6" x2="121.6" y1="160.7" y2="171.7"/><rect x="117.1" y="160.7" width="9.0" height="4.3"/></g><g class="candle down"><title>Wed 16 Sep 14:30  O 168.79  H 168.85  L 166.60  C 167.49  Vol 329,585</title><line x1="136.1" x2="136.1" y1="164.2" y2="195.6"/><rect x="131.6" y="164.9" width="9.0" height="18.2"/></g><g class="candle up"><title>Wed 16 Sep 15:30  O 167.49  H 167.71  L 166.80  C 167.52  Vol 420,423</title><line x1="150.7" x2="150.7" y1="180.2" y2="192.8"/><rect x="146.2" y="182.8" width="9.0" height="1.0"/></g><g class="candle down"><title>Thu 17 Sep 09:30  O 169.31  H 169.31  L 165.60  C 167.36  Vol 399,203</title><line x1="177.0" x2="177.0" y1="157.7" y2="209.6"/><rect x="172.4" y="157.7" width="9.0" height="27.3"/></g><g class="candle down"><title>Thu 17 Sep 10:30  O 167.29  H 167.59  L 165.79  C 166.38  Vol 238,441</title><line x1="191.5" x2="191.5" y1="181.8" y2="207.0"/><rect x="187.0" y="186.0" width="9.0" height="12.7"/></g><g class="candle down"><title>Thu 17 Sep 11:30  O 166.41  H 166.72  L 165.91  C 166.20  Vol 140,884</title><line x1="206.1" x2="206.1" y1="193.9" y2="205.3"/><rect x="201.6" y="198.3" width="9.0" height="2.9"/></g><g class="candle down"><title>Thu 17 Sep 12:30  O 166.23  H 166.27  L 165.73  C 165.96  Vol 158,611</title><line x1="220.7" x2="220.7" y1="200.2" y2="207.8"/><rect x="216.2" y="200.8" width="9.0" height="3.8"/></g><g class="candle down"><title>Thu 17 Sep 13:30  O 165.95  H 166.24  L 165.68  C 165.74  Vol 156,642</title><line x1="235.2" x2="235.2" y1="200.6" y2="208.5"/><rect x="230.7" y="204.7" width="9.0" height="2.9"/></g><g class="candle down"><title>Thu 17 Sep 14:30  O 165.71  H 165.97  L 165.43  C 165.63  Vol 281,321</title><line x1="249.8" x2="249.8" y1="204.4" y2="212.0"/><rect x="245.3" y="208.1" width="9.0" height="1.1"/></g><g class="candle up"><title>Thu 17 Sep 15:30  O 165.58  H 166.17  L 165.52  C 165.92  Vol 414,061</title><line x1="264.4" x2="264.4" y1="201.6" y2="210.7"/><rect x="259.9" y="205.1" width="9.0" height="4.8"/></g><g class="candle down"><title>Fri 18 Sep 09:30  O 165.46  H 166.42  L 164.79  C 165.29  Vol 936,437</title><line x1="290.6" x2="290.6" y1="198.1" y2="220.8"/><rect x="286.1" y="211.5" width="9.0" height="2.4"/></g><g class="candle up"><title>Fri 18 Sep 10:30  O 165.32  H 166.69  L 165.03  C 165.86  Vol 272,060</title><line x1="305.2" x2="305.2" y1="194.4" y2="217.6"/><rect x="300.7" y="206.0" width="9.0" height="7.6"/></g><g class="candle up"><title>Fri 18 Sep 11:30  O 165.91  H 166.19  L 165.59  C 166.08  Vol 244,811</title><line x1="319.8" x2="319.8" y1="201.3" y2="209.8"/><rect x="315.2" y="202.9" width="9.0" height="2.4"/></g><g class="candle down"><title>Fri 18 Sep 12:30  O 166.04  H 166.36  L 165.73  C 165.82  Vol 174,711</title><line x1="334.3" x2="334.3" y1="199.0" y2="207.8"/><rect x="329.8" y="203.4" width="9.0" height="3.1"/></g><g class="candle up"><title>Fri 18 Sep 13:30  O 165.82  H 166.27  L 165.72  C 166.27  Vol 205,186</title><line x1="348.9" x2="348.9" y1="200.2" y2="207.9"/><rect x="344.4" y="200.2" width="9.0" height="6.3"/></g><g class="candle up"><title>Fri 18 Sep 14:30  O 166.25  H 167.27  L 166.18  C 167.17  Vol 347,681</title><line x1="363.5" x2="363.5" y1="186.2" y2="201.5"/><rect x="359.0" y="187.6" width="9.0" height="12.9"/></g><g class="candle down"><title>Fri 18 Sep 15:30  O 167.19  H 167.34  L 165.82  C 166.20  Vol 894,291</title><line x1="378.1" x2="378.1" y1="185.3" y2="206.5"/><rect x="373.5" y="187.4" width="9.0" height="13.8"/></g><g class="candle down"><title>Mon 21 Sep 09:30  O 166.56  H 167.30  L 164.70  C 166.38  Vol 411,390</title><line x1="404.3" x2="404.3" y1="185.8" y2="222.2"/><rect x="399.8" y="196.2" width="9.0" height="2.5"/></g><g class="candle down"><title>Mon 21 Sep 10:30  O 166.41  H 166.48  L 165.64  C 165.88  Vol 234,003</title><line x1="418.9" x2="418.9" y1="197.3" y2="209.0"/><rect x="414.3" y="198.3" width="9.0" height="7.4"/></g><g class="candle up"><title>Mon 21 Sep 11:30  O 165.76  H 166.72  L 165.53  C 166.56  Vol 221,649</title><line x1="433.4" x2="433.4" y1="193.9" y2="210.6"/><rect x="428.9" y="196.2" width="9.0" height="11.1"/></g><g class="candle up"><title>Mon 21 Sep 12:30  O 166.51  H 166.84  L 166.34  C 166.75  Vol 169,352</title><line x1="448.0" x2="448.0" y1="192.3" y2="199.3"/><rect x="443.5" y="193.5" width="9.0" height="3.4"/></g><g class="candle up"><title>Mon 21 Sep 13:30  O 166.82  H 167.58  L 166.60  C 167.44  Vol 238,691</title><line x1="462.6" x2="462.6" y1="181.9" y2="195.6"/><rect x="458.1" y="183.9" width="9.0" height="8.7"/></g><g class="candle up"><title>Mon 21 Sep 14:30  O 167.45  H 167.97  L 167.19  C 167.85  Vol 356,554</title><line x1="477.1" x2="477.1" y1="176.5" y2="187.4"/><rect x="472.6" y="178.1" width="9.0" height="5.6"/></g><g class="candle down"><title>Mon 21 Sep 15:30  O 167.84  H 167.95  L 166.78  C 166.86  Vol 545,363</title><line x1="491.7" x2="491.7" y1="176.7" y2="193.1"/><rect x="487.2" y="178.3" width="9.0" height="13.6"/></g><g class="candle down"><title>Tue 22 Sep 09:30  O 169.60  H 169.60  L 164.24  C 164.50  Vol 386,141</title><line x1="517.9" x2="517.9" y1="153.7" y2="228.7"/><rect x="513.4" y="153.7" width="9.0" height="71.3"/></g><g class="candle down"><title>Tue 22 Sep 10:30  O 164.46  H 164.85  L 161.81  C 163.19  Vol 539,889</title><line x1="532.5" x2="532.5" y1="220.1" y2="262.6"/><rect x="528.0" y="225.5" width="9.0" height="17.8"/></g><g class="candle up"><title>Tue 22 Sep 11:30  O 163.20  H 163.84  L 162.59  C 163.62  Vol 302,563</title><line x1="547.1" x2="547.1" y1="234.2" y2="251.7"/><rect x="542.6" y="237.3" width="9.0" height="5.9"/></g><g class="candle down"><title>Tue 22 Sep 12:30  O 163.54  H 163.84  L 162.81  C 163.17  Vol 202,961</title><line x1="561.7" x2="561.7" y1="234.2" y2="248.6"/><rect x="557.1" y="238.4" width="9.0" height="5.2"/></g><g class="candle down"><title>Tue 22 Sep 13:30  O 163.16  H 163.34  L 161.32  C 162.02  Vol 440,005</title><line x1="576.2" x2="576.2" y1="241.2" y2="269.5"/><rect x="571.7" y="243.6" width="9.0" height="16.0"/></g><g class="candle down"><title>Tue 22 Sep 14:30  O 162.10  H 162.21  L 160.76  C 160.79  Vol 640,047</title><line x1="590.8" x2="590.8" y1="257.0" y2="277.2"/><rect x="586.3" y="258.5" width="9.0" height="18.3"/></g><g class="candle up"><title>Tue 22 Sep 15:30  O 160.81  H 162.68  L 160.71  C 161.81  Vol 1,171,008</title><line x1="605.4" x2="605.4" y1="250.4" y2="277.9"/><rect x="600.9" y="262.6" width="9.0" height="14.0"/></g><g class="candle down"><title>Wed 23 Sep 09:30  O 159.52  H 160.20  L 153.56  C 155.54  Vol 1,633,210</title><line x1="631.6" x2="631.6" y1="285.1" y2="377.9"/><rect x="627.1" y="294.6" width="9.0" height="55.7"/></g><g class="candle down"><title>Wed 23 Sep 10:30  O 155.48  H 155.55  L 152.39  C 152.44  Vol 968,574</title><line x1="646.2" x2="646.2" y1="350.0" y2="394.3"/><rect x="641.7" y="351.1" width="9.0" height="42.5"/></g><g class="candle up"><title>Wed 23 Sep 11:30  O 152.44  H 153.22  L 151.75  C 152.67  Vol 1,966,436</title><line x1="660.8" x2="660.8" y1="382.6" y2="403.2"/><rect x="656.2" y="390.3" width="9.0" height="3.2"/></g><g class="candle down"><title>Wed 23 Sep 12:30  O 152.68  H 152.73  L 151.38  C 152.31  Vol 1,090,134</title><line x1="675.3" x2="675.3" y1="389.5" y2="408.4"/><rect x="670.8" y="390.2" width="9.0" height="5.2"/></g><g class="candle down"><title>Wed 23 Sep 13:30  O 152.27  H 152.56  L 151.56  C 152.16  Vol 1,324,869</title><line x1="689.9" x2="689.9" y1="391.9" y2="405.8"/><rect x="685.4" y="395.9" width="9.0" height="1.5"/></g><g class="candle down"><title>Wed 23 Sep 14:30  O 152.15  H 152.19  L 150.24  C 150.82  Vol 1,630,505</title><line x1="704.5" x2="704.5" y1="397.0" y2="424.3"/><rect x="700.0" y="397.6" width="9.0" height="18.7"/></g><g class="candle down"><title>Wed 23 Sep 15:30  O 150.86  H 150.92  L 149.00  C 149.67  Vol 2,672,823</title><line x1="719.0" x2="719.0" y1="414.8" y2="441.6"/><rect x="714.5" y="415.6" width="9.0" height="16.6"/></g><g class="candle up"><title>Thu 24 Sep 09:30  O 150.70  H 153.97  L 150.70  C 151.97  Vol 1,380,330</title><line x1="745.3" x2="745.3" y1="372.2" y2="417.9"/><rect x="740.8" y="400.1" width="9.0" height="17.8"/></g><g class="candle down"><title>Thu 24 Sep 10:30  O 152.00  H 152.24  L 151.30  C 151.48  Vol 594,079</title><line x1="759.9" x2="759.9" y1="396.4" y2="409.5"/><rect x="755.3" y="399.7" width="9.0" height="7.3"/></g><g class="candle down"><title>Thu 24 Sep 11:30  O 151.49  H 152.46  L 150.42  C 151.05  Vol 774,496</title><line x1="774.4" x2="774.4" y1="393.2" y2="421.8"/><rect x="769.9" y="406.9" width="9.0" height="6.0"/></g><g class="candle down"><title>Thu 24 Sep 12:30  O 151.16  H 151.40  L 150.52  C 150.65  Vol 685,235</title><line x1="789.0" x2="789.0" y1="408.1" y2="420.4"/><rect x="784.5" y="411.4" width="9.0" height="7.2"/></g><g class="candle down"><title>Thu 24 Sep 13:30  O 150.66  H 150.91  L 150.04  C 150.41  Vol 905,082</title><line x1="803.6" x2="803.6" y1="414.9" y2="427.1"/><rect x="799.1" y="418.4" width="9.0" height="3.5"/></g><g class="candle up"><title>Thu 24 Sep 14:30  O 150.40  H 150.82  L 149.68  C 150.82  Vol 814,971</title><line x1="818.1" x2="818.1" y1="416.1" y2="432.1"/><rect x="813.6" y="416.1" width="9.0" height="5.9"/></g><g class="candle up"><title>Thu 24 Sep 15:30  O 150.77  H 151.88  L 150.68  C 151.36  Vol 1,062,061</title><line x1="832.7" x2="832.7" y1="401.3" y2="418.2"/><rect x="828.2" y="408.6" width="9.0" height="8.2"/></g><polyline class="ma ma-0" points="63.3,167.9 77.9,165.7 92.4,162.5 107.0,161.9 121.6,162.5 136.1,166.7 150.7,169.9 177.0,172.9 191.5,178.0 206.1,182.7 220.7,187.1 235.2,191.2 249.8,194.8 264.4,196.8 290.6,200.2 305.2,201.4 319.8,201.7 334.3,202.7 348.9,202.2 363.5,199.3 378.1,199.7 404.3,199.5 418.9,200.7 433.4,199.8 448.0,198.5 462.6,195.6 477.1,192.1 491.7,192.1 517.9,198.7 532.5,207.6 547.1,213.5 561.7,219.5 576.2,227.6 590.8,237.4 605.4,242.4 631.6,264.0 646.2,289.9 660.8,310.0 675.3,327.1 689.9,341.2 704.5,356.2 719.0,371.4 745.3,377.1 759.9,383.1 774.4,389.1 789.0,395.0 803.6,400.4 818.1,403.5 832.7,404.5"><title>EMA9</title></polyline><polyline class="ma ma-1" points="63.3,118.0 77.9,119.6 92.4,120.7 107.0,122.3 121.6,123.9 136.1,126.3 150.7,128.5 177.0,130.7 191.5,133.4 206.1,136.0 220.7,138.7 235.2,141.4 249.8,144.1 264.4,146.5 290.6,149.1 305.2,151.3 319.8,153.3 334.3,155.4 348.9,157.2 363.5,158.4 378.1,160.1 404.3,161.6 418.9,163.3 433.4,164.6 448.0,165.7 462.6,166.4 477.1,166.9 491.7,167.9 517.9,170.1 532.5,173.0 547.1,175.5 561.7,178.2 576.2,181.4 590.8,185.1 605.4,188.2 631.6,194.5 646.2,202.3 660.8,209.7 675.3,217.0 689.9,224.1 704.5,231.6 719.0,239.5 745.3,245.8 759.9,252.1 774.4,258.4 789.0,264.7 803.6,270.8 818.1,276.5 832.7,281.7"><title>EMA50</title></polyline><polyline class="vwap" points="63.3,167.5 77.9,163.3 92.4,159.3 107.0,158.7 121.6,159.5 136.1,163.2 150.7,167.1"><title>VWAP 2026-09-16</title></polyline><polyline class="vwap" points="177.0,184.1 191.5,188.5 206.1,190.6 220.7,192.9 235.2,194.7 249.8,197.5 264.4,199.4"><title>VWAP 2026-09-17</title></polyline><polyline class="vwap" points="290.6,210.9 305.2,209.8 319.8,209.0 334.3,208.5 348.9,207.8 363.5,205.3 378.1,203.1"><title>VWAP 2026-09-18</title></polyline><polyline class="vwap" points="404.3,202.2 418.9,202.9 433.4,202.2 448.0,201.0 462.6,198.4 477.1,194.5 491.7,192.7"><title>VWAP 2026-09-21</title></polyline><polyline class="vwap" points="517.9,202.4 532.5,225.5 547.1,229.3 561.7,231.1 576.2,237.2 590.8,245.6 605.4,251.3"><title>VWAP 2026-09-22</title></polyline><polyline class="vwap" points="631.6,337.8 646.2,353.2 660.8,369.9 675.3,375.3 689.9,379.7 704.5,385.9 719.0,396.2"><title>VWAP 2026-09-23</title></polyline><polyline class="vwap" points="745.3,396.7 759.9,399.0 774.4,401.9 789.0,404.7 803.6,408.1 818.1,410.2 832.7,410.1"><title>VWAP 2026-09-24</title></polyline><line class="lvl lvl-target" x1="56" x2="840" y1="303.0" y2="303.0"/><text class="lvl-label lvl-target" x="886" y="306.0">Target 158.92</text><line class="lvl lvl-poc" x1="56" x2="840" y1="402.5" y2="402.5"/><text class="lvl-label lvl-poc" x="886" y="405.5">POC 151.80</text><text class="lvl-label lvl-vwap" x="886" y="425.1">VWAP 151.26</text><line class="lvl lvl-support" x1="56" x2="840" y1="441.6" y2="441.6"/><text class="lvl-label lvl-support" x="886" y="444.6">Support 149.00</text><line class="lvl lvl-stop" x1="56" x2="840" y1="479.1" y2="479.1"/><text class="lvl-label lvl-stop" x="886" y="482.1">Stop 146.32</text><circle class="last" cx="832.7" cy="408.6" r="3"/>
+        </svg>
+      </div>
+      </details>
+
+      <table class="tf-table">
+        <thead>
+          <tr>
+            <th>TF</th><th>Close</th><th>EMA50</th><th>Trend</th>
+            <th>%K</th><th>%D</th><th>K vs D</th><th>Stoch</th><th>Overbought</th>
+            <th>Candles</th><th>Support</th><th>Resistance</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td>1D</td>
+          <td>151.36</td>
+          <td>166.11</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>4.17</td>
+          <td>5.26</td>
+          <td><span class="badge fail">K&lt;D</span></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>bullish_harami</td>
+          <td>149.0</td>
+          <td>173.43</td>
+        </tr>
+        <tr>
+          <td>4h</td>
+          <td>151.36</td>
+          <td>168.82</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>7.25</td>
+          <td>5.99</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>149.0</td>
+          <td>173.43</td>
+        </tr>
+        <tr>
+          <td>1h</td>
+          <td>151.36</td>
+          <td>160.44</td>
+          <td><span class="badge fail">DOWN</span></td>
+          <td>14.92</td>
+          <td>12.85</td>
+          <td><span class="badge pass">K&gt;D</span></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><span class="badge pass">OK</span></td>
+          <td>-</td>
+          <td>149.0</td>
+          <td>164.85</td>
+        </tr>
+        </tbody>
+      </table>
+
+      <div class="grid2">
+        <div>
+          <h3>Hard requirement #1 - Daily &amp; 4h trend/stochastic</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily trend up (close &gt; MA)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>Daily stochastic bullish</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h trend up (close &gt; MA)</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>4h stochastic bullish</td><td><span class="badge pass">PASS</span></td></tr>
+          </tbody></table>
+
+          <h3>Structural requirement #2 - Structural confirmation (daily OR 4h)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>Daily bullish pattern (bullish_harami)</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>4h bullish pattern (none)</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+          <p class="note">Overall hard requirements met: <span class="badge fail">FAIL</span></p>
+        </div>
+
+        <div>
+          <h3>Soft conditions (need &ge; 3/5, score 3/5)</h3>
+          <table class="detail-table"><tbody>
+        <tr><td>1h not overbought</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>1h MACD bullish</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Volume confirmed</td><td><span class="badge pass">PASS</span></td></tr>
+        <tr><td>Near support</td><td><span class="badge fail">FAIL</span></td></tr>
+        <tr><td>1h bullish pattern</td><td><span class="badge fail">FAIL</span></td></tr>
+          </tbody></table>
+
+
+        </div>
+      </div>
+      
+      <h3>Other levels</h3>
+      <table class="detail-table four-col ">
+        <colgroup><col class="c-lbl"><col class="c-val"><col class="c-lbl"><col class="c-val"></colgroup>
+        <tbody><tr><td>52-week range</td><td>110.81 - 193.45 (at 49%)</td><td>Session VWAP</td><td>151.26 <span class="badge pass">ABOVE</span></td></tr><tr><td>Daily ATR(14)</td><td>5.36 (today used 80%)</td><td>Reg. channel (49 bars, 2.0&sigma;)</td><td>145.43 / 151.76 / 158.09</td></tr><tr><td>ATR projected range</td><td>148.61 - 155.04</td><td>Channel slope</td><td>-1.97%/day</td></tr><tr><td>Pre-market price</td><td>N/A</td><td>Channel fit (R&sup2;)</td><td>0.78</td></tr><tr><td>Today's range</td><td>149.68 - 153.97 (range 4.29)</td><td>Price in channel</td><td>47%</td></tr><tr><td>1h entry support</td><td>149.0</td><td>Structural stop (1h support - 0.5x daily ATR)</td><td>146.32</td></tr><tr><td>POC (7d volume profile)</td><td>151.8</td><td><strong>Take-Profit Target (1.5x)</strong></td><td><strong>158.92</strong></td></tr>
+      </tbody></table>
+      
+      <h3>Event Catalysts</h3>
+      <table class="detail-table"><tbody>
+        <tr><td>Next earnings</td><td>2026-11-05 (+41d) <span class="badge fail">CLEAR</span></td></tr>
+        <tr><td>S&amp;P 500 membership</td><td><span class="badge pass">MEMBER</span> (added 2023-09-18, 1103d ago)</td></tr>
+        
+        <tr><td>Buyback headlines (0)</td><td>none</td></tr>
+        <tr><td>Guidance headlines (0)</td><td>none</td></tr>
+        <tr><td>Analyst actions (1 up / 0 down)</td><td>2026-09-21 RBC Capital: reit -&gt; Outperform<br>2026-09-18 Citizens: main -&gt; Market Outperform<br>2026-09-10 Truist Securities: main -&gt; Hold<br>2026-09-08 Raymond James: up -&gt; Outperform<br>2026-09-08 Baird: main -&gt; Outperform<br>2026-09-01 Rosenblatt: init -&gt; Buy<br>2026-08-31 DA Davidson: main -&gt; Buy</td></tr>
+        <tr><td>Reddit Sentiment (ApeWisdom)</td><td><span class="badge">Not in Top 50</span></td></tr>
+        <tr><td>News (0, today)</td><td>none</td></tr>
+      </tbody></table>
+      
+      <h3>Fundamentals</h3>
+      <table class="detail-table four-col fundamentals-table">
+        <colgroup><col class="c-lbl"><col class="c-val"><col class="c-lbl"><col class="c-val"></colgroup>
+        <tbody><tr><td>Name</td><td>Airbnb, Inc.</td><td>Operating Margin</td><td>21.01%</td></tr><tr><td>Sector</td><td>Consumer Cyclical</td><td>Return on Equity</td><td>34.54%</td></tr><tr><td>Industry</td><td>Travel Services</td><td>Revenue Growth (YoY)</td><td>16.50%</td></tr><tr><td>Market Cap</td><td>$90.65B</td><td>Free Cash Flow</td><td>$3.21B</td></tr><tr><td>Trailing P/E</td><td>34.10</td><td>Debt/Equity</td><td>32.00</td></tr><tr><td>Forward P/E</td><td>24.47</td><td>Current Ratio</td><td>1.41</td></tr><tr><td>PEG Ratio</td><td>1.42</td><td>Institutional Ownership</td><td>89.36%</td></tr><tr><td>Price/Book</td><td>11.45</td><td>Short % of Float</td><td>3.50%</td></tr><tr><td>Price/Sales (TTM)</td><td>6.89</td><td>Beta</td><td>1.16</td></tr><tr><td>EPS (TTM)</td><td>4.44</td><td>52-Week High</td><td>193.45</td></tr><tr><td>Dividend Yield</td><td>N/A</td><td>52-Week Low</td><td>110.81</td></tr><tr><td>Profit Margin</td><td>20.45%</td><td>Analyst Target (Mean)</td><td>184.35</td></tr>
+      </tbody></table>
+      
+      <h3>Analyst Recommendations</h3>
+      <table class="detail-table four-col ">
+        <colgroup><col class="c-lbl"><col class="c-val"><col class="c-lbl"><col class="c-val"></colgroup>
+        <tbody><tr><td>Consensus</td><td>Buy</td><td>Buy</td><td>21</td></tr><tr><td>Mean Score</td><td>2.00</td><td>Hold</td><td>16</td></tr><tr><td># Analyst Opinions</td><td>40</td><td>Sell</td><td>1</td></tr><tr><td>Strong Buy</td><td>6</td><td>Strong Sell</td><td>1</td></tr>
+      </tbody></table>
+
+      <h3>EPS Estimate Revisions (current quarter)</h3>
+      <table class="detail-table four-col ">
+        <colgroup><col class="c-lbl"><col class="c-val"><col class="c-lbl"><col class="c-val"></colgroup>
+        <tbody><tr><td>Current Consensus EPS</td><td>2.87</td><td># Analysts (EPS)</td><td>33</td></tr><tr><td>EPS 30 Days Ago</td><td>2.85</td><td>EPS Trend</td><td><span class="badge pass">IMPROVING</span></td></tr>
+      </tbody></table>
+    </section><section class="card"><h3>Not shown (1)</h3><ul class="note"><li><strong>AIR</strong>: filtered out - fails all 4 checks (hard &lt;3/4, no pattern, soft &lt;2, EPS deteriorating)</li></ul></section>
+</body>
+</html>

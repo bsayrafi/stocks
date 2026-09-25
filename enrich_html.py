@@ -40,6 +40,11 @@ try:
 except ImportError:
     finnhub = None
 import constants
+
+# API keys live in constants.CONFIG (kept out of this file):
+#   CONFIG = {"ALPACA_HEADERS": {"APCA-API-KEY-ID": ..., "APCA-API-SECRET-KEY": ...},
+#             "FINNHUB_API_KEY": ...}
+_SECRETS = getattr(constants, "CONFIG", {}) or {}
 from datetime import datetime, timedelta, timezone
 from event_catalysts import *
 from event_catalysts import _get_sp500_membership
@@ -109,15 +114,18 @@ CONFIGH = {
     # APCA_API_SECRET_KEY environment variables.
     "PREMARKET_ENABLED": True,
     "PREMARKET_START": "04:00",    # pre-market session start, MARKET_TZ
-    "ALPACA_FEED": "sip",          # "sip" = all exchanges; "iex" = live but IEX-only
+    "ALPACA_FEED": "auto",         # "auto" = pick SIP or IEX (see get_best_pre_market_price),
+                                   # "sip" = all exchanges, delayed; "iex" = live but IEX-only
     "ALPACA_SIP_DELAY_MIN": 16,    # free plan: SIP must be >=15 min old; 0 if you pay for live SIP
-    "ALPACA_HEADERS": None,        # or {"APCA-API-KEY-ID": "...", "APCA-API-SECRET-KEY": "..."}
+    "PREMARKET_MOVE_PCT": 0.3,     # auto: use live IEX if price moved >= this % since the SIP snapshot
+    "PREMARKET_IEX_MAX_GAP_PCT": 0.5,  # auto: distrust IEX if it differs from SIP by > this % at the same time
+    "ALPACA_HEADERS": _SECRETS.get("ALPACA_HEADERS"),   # from constants.CONFIG
 
     # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
     # Key: here, or the FINNHUB_API_KEY environment variable.
-    "FINNHUB_API_KEY": "dafflm1r01quvmmfau5gdafflm1r01quvmmfau60",
+    "FINNHUB_API_KEY": _SECRETS.get("FINNHUB_API_KEY"),  # from constants.CONFIG
     "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
-    "NEWS_MAX": 50,                # max articles shown per ticker (newest first)
+    "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
 }
 
@@ -375,37 +383,20 @@ def volume_poc(df: pd.DataFrame, bins: int = 50) -> float:
 ALPACA_DATA_URL = "https://data.alpaca.markets/v2"
 
 
-def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "sip",
-                         delay_minutes: int = 16, tz: str = "America/New_York",
-                         start_hhmm: str = "04:00", open_hhmm: str = "09:30",
-                         timeout: float = 10.0, with_time: bool = False):
-    """Latest pre-market trade price for `ticker` from Alpaca, for TODAY's
-    pre-market session (start_hhmm to open_hhmm, exchange time).
-
-    Takes the close of the last 1-minute bar between the pre-market start and
-    min(now - delay_minutes, the open).
-
-    feed="sip" (default) covers ALL exchanges. Alpaca's free plan allows SIP
-    data only if it's at least 15 minutes old, so with delay_minutes=16 the
-    query never touches the restricted window: during pre-market you get the
-    price as of ~16 minutes ago; after the open you get the final pre-market
-    price (09:14 ET or later is fully allowed by 09:46 ET). With a paid data
-    plan, pass delay_minutes=0 for live SIP. feed="iex" is live on the free
-    plan but only sees IEX-exchange trades (often thin pre-market).
-
-    Returns the price (float), or None if there are no pre-market trades in
-    the window (before ~04:16 ET, weekend/holiday) or on any API/network error.
-    with_time=True returns (price, "HH:MM") instead, the time of that bar in
-    exchange time, or (None, None).
-
-    headers: {"APCA-API-KEY-ID": ..., "APCA-API-SECRET-KEY": ...}; if None,
-    read from the APCA_API_KEY_ID / APCA_API_SECRET_KEY environment variables.
-    """
-    none = (None, None) if with_time else None
+def _alpaca_premarket_bars(ticker: str, headers: dict | None, feed: str, delay_minutes: int = 0,
+                           tz: str = "America/New_York", start_hhmm: str = "04:00",
+                           open_hhmm: str = "09:30", timeout: float = 10.0) -> list | None:
+    """1-minute bars for TODAY's pre-market session on one Alpaca feed, from
+    start_hhmm up to min(now - delay_minutes, open_hhmm). Each bar is
+    {"t": pd.Timestamp (exchange tz), "c": close, "v": volume}.
+    Returns [] if the window hasn't started / has no trades, None on error or
+    missing keys."""
+    if headers is None:
+        headers = _SECRETS.get("ALPACA_HEADERS")
     if headers is None:
         key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
         if not key or not secret:
-            return none
+            return None
         headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 
     now = pd.Timestamp.now(tz=tz)
@@ -415,30 +406,102 @@ def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "
     latest_allowed = (now - pd.Timedelta(minutes=delay_minutes)).floor("min")
     end = min(latest_allowed, now.normalize() + pd.Timedelta(hours=oh, minutes=om))
     if end <= start:
-        return none  # today's pre-market hasn't started yet (or is still inside the delay)
+        return []
 
-    params = {
-        "timeframe": "1Min",
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-        "feed": feed,
-        "adjustment": "raw",
-        "limit": 10000,
-    }
+    params = {"timeframe": "1Min", "start": start.isoformat(), "end": end.isoformat(),
+              "feed": feed, "adjustment": "raw", "limit": 10000}
     try:
         resp = requests.get(f"{ALPACA_DATA_URL}/stocks/{ticker}/bars",
                             headers=headers, params=params, timeout=timeout)
         resp.raise_for_status()
-        bars = resp.json().get("bars") or []
+        raw = resp.json().get("bars") or []
     except (requests.RequestException, ValueError) as e:
-        print(f"  [{ticker}] pre-market price unavailable ({feed}): {e}")
-        return none
+        print(f"  [{ticker}] pre-market bars unavailable ({feed}): {e}")
+        return None
+    return [{"t": pd.Timestamp(b["t"]).tz_convert(tz), "c": float(b["c"]), "v": float(b.get("v", 0))}
+            for b in raw]
+
+
+def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "sip",
+                         delay_minutes: int = 16, tz: str = "America/New_York",
+                         start_hhmm: str = "04:00", open_hhmm: str = "09:30",
+                         timeout: float = 10.0, with_time: bool = False):
+    """Latest pre-market price for `ticker` from ONE Alpaca feed (today's session).
+
+    feed="sip": all exchanges; on the free plan it must be >=15 min old, so
+    delay_minutes=16 keeps the query out of the restricted window.
+    feed="iex": live (pass delay_minutes=0) but only IEX-exchange trades.
+
+    Returns the price (float) or None. with_time=True returns (price, "HH:MM").
+    See get_best_pre_market_price() to combine both feeds automatically.
+    """
+    bars = _alpaca_premarket_bars(ticker, headers, feed, delay_minutes, tz, start_hhmm, open_hhmm, timeout)
     if not bars:
-        return none
-    price = round(float(bars[-1]["c"]), 2)
-    if with_time:
-        return price, pd.Timestamp(bars[-1]["t"]).tz_convert(tz).strftime("%H:%M")
-    return price
+        return (None, None) if with_time else None
+    price = round(bars[-1]["c"], 2)
+    return (price, bars[-1]["t"].strftime("%H:%M")) if with_time else price
+
+
+def get_best_pre_market_price(ticker: str, headers: dict | None = None, sip_delay_minutes: int = 16,
+                              move_pct: float = 0.3, max_iex_gap_pct: float = 0.5,
+                              tz: str = "America/New_York", start_hhmm: str = "04:00",
+                              open_hhmm: str = "09:30", timeout: float = 10.0,
+                              with_details: bool = False):
+    """Pick between delayed SIP (complete, ~16 min old) and live IEX (fresh,
+    but only IEX-exchange trades) for the pre-market price.
+
+    Decision, in order:
+      1. Only one feed has data            -> use that one.
+      2. IEX has no trade newer than SIP   -> SIP (IEX adds nothing fresher).
+      3. IEX disagreed with SIP at SIP's own timestamp by more than
+         max_iex_gap_pct                   -> SIP (IEX too thin/unreliable today).
+      4. Price moved >= move_pct from the SIP price to the latest IEX price
+                                           -> IEX (the market has moved since the
+                                              SIP snapshot, so the live price matters).
+      5. Otherwise (little movement)       -> SIP (full-market price, still accurate).
+
+    Returns the price (float) or None. with_details=True returns a dict:
+    {"price", "time", "source" ("sip"/"iex"), "reason", "sip_price", "sip_time",
+     "iex_price", "iex_time", "move_pct"} (price None if neither feed has data).
+    """
+    kw = dict(tz=tz, start_hhmm=start_hhmm, open_hhmm=open_hhmm, timeout=timeout)
+    sip = _alpaca_premarket_bars(ticker, headers, "sip", sip_delay_minutes, **kw) or []
+    iex = _alpaca_premarket_bars(ticker, headers, "iex", 0, **kw) or []
+
+    d = {"price": None, "time": None, "source": None, "reason": "no pre-market data",
+         "sip_price": None, "sip_time": None, "iex_price": None, "iex_time": None, "move_pct": None}
+    if sip:
+        d["sip_price"], d["sip_time"] = round(sip[-1]["c"], 2), sip[-1]["t"]
+    if iex:
+        d["iex_price"], d["iex_time"] = round(iex[-1]["c"], 2), iex[-1]["t"]
+
+    def pick(src, reason):
+        d["source"], d["reason"] = src, reason
+        d["price"], d["time"] = d[f"{src}_price"], d[f"{src}_time"]
+
+    if sip and iex:
+        d["move_pct"] = round((d["iex_price"] / d["sip_price"] - 1) * 100, 2)
+        # what IEX said at (or just before) the SIP bar's time - a like-for-like check
+        iex_then = [b for b in iex if b["t"] <= d["sip_time"]]
+        gap = abs(iex_then[-1]["c"] / d["sip_price"] - 1) * 100 if iex_then else None
+
+        if d["iex_time"] <= d["sip_time"]:
+            pick("sip", "no IEX trade newer than the SIP snapshot")
+        elif gap is not None and gap > max_iex_gap_pct:
+            pick("sip", f"IEX off by {gap:.2f}% vs SIP at the same time (thin IEX trading)")
+        elif abs(d["move_pct"]) >= move_pct:
+            pick("iex", f"moved {d['move_pct']:+.2f}% since the SIP snapshot")
+        else:
+            pick("sip", f"only {d['move_pct']:+.2f}% move since the SIP snapshot")
+    elif sip:
+        pick("sip", "no IEX pre-market trades")
+    elif iex:
+        pick("iex", "no SIP data yet (within the 15-min delay)")
+
+    for k in ("time", "sip_time", "iex_time"):
+        if d[k] is not None:
+            d[k] = d[k].strftime("%H:%M")
+    return d if with_details else d["price"]
 
 
 def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
@@ -447,7 +510,7 @@ def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
     Returns a list of {"time": "YYYY-MM-DD HH:MM", "headline": str, "url": str},
     newest first, duplicates (same headline) removed. Returns [] if the
     finnhub package or API key is missing, or on any API/network error."""
-    api_key = api_key or os.environ.get("FINNHUB_API_KEY")
+    api_key = api_key or _SECRETS.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_API_KEY")
     if finnhub is None or not api_key:
         return []
     today = dt.date.today()
@@ -800,14 +863,25 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
-    pre_market, pre_market_time = None, None
+    pre_market, pre_market_time, pre_market_info = None, None, None
     if cfg.get("PREMARKET_ENABLED", True):
-        feed = cfg.get("ALPACA_FEED", "sip")
-        pre_market, pre_market_time = get_pre_market_price(
-            cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"), feed=feed,
-            delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16) if feed == "sip" else 0, with_time=True,
-            tz=cfg.get("MARKET_TZ", "America/New_York"), start_hhmm=cfg.get("PREMARKET_START", "04:00"),
-            open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
+        feed = cfg.get("ALPACA_FEED", "auto")
+        pm_kw = dict(tz=cfg.get("MARKET_TZ", "America/New_York"),
+                     start_hhmm=cfg.get("PREMARKET_START", "04:00"), open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
+        if feed == "auto":
+            pre_market_info = get_best_pre_market_price(
+                cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"),
+                sip_delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16),
+                move_pct=cfg.get("PREMARKET_MOVE_PCT", 0.3),
+                max_iex_gap_pct=cfg.get("PREMARKET_IEX_MAX_GAP_PCT", 0.5), with_details=True, **pm_kw)
+            pre_market, pre_market_time = pre_market_info["price"], pre_market_info["time"]
+        else:
+            pre_market, pre_market_time = get_pre_market_price(
+                cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"), feed=feed,
+                delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16) if feed == "sip" else 0,
+                with_time=True, **pm_kw)
+            if pre_market is not None:
+                pre_market_info = {"source": feed, "reason": "fixed feed (ALPACA_FEED)"}
 
     # The channel is always computed because its slope decides whether the ticker
     # goes to the _up or _down report; LRC_ENABLED only controls whether it's shown.
@@ -854,6 +928,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
         "trend_dir": trend_dir,
         "pre_market": pre_market,
         "pre_market_time": pre_market_time,
+        "pre_market_info": pre_market_info,
         "news": news,
     }
 
@@ -890,7 +965,9 @@ def print_report(report: dict) -> None:
         side = "above" if report["above_vwap"] else "below"
         print(f"Session VWAP: {report['vwap']} (price {side} VWAP)")
     if report.get("pre_market") is not None:
-        print(f"Pre-market price: {report['pre_market']} (as of {report.get('pre_market_time')} ET)")
+        info = report.get("pre_market_info") or {}
+        print(f"Pre-market price: {report['pre_market']} (as of {report.get('pre_market_time')} ET, "
+              f"{str(info.get('source', '')).upper()}: {info.get('reason', '')})")
     lrc = report.get("lrc")
     if lrc:
         print(f"Regression channel ({lrc['bars']} bars, {lrc['dev']}σ): {lrc['last_lower']} / "
@@ -1262,6 +1339,18 @@ def render_ticker_html(report: dict) -> str:
     signal_cls = "buy" if signal["signal"] == "BUY" else "wait"
     vwap_badge = "" if report.get("above_vwap") is None else _badge(report["above_vwap"], "ABOVE", "BELOW")
 
+    # pre-market source line, e.g. "IEX live - moved +0.62% since the SIP snapshot (SIP 147.35 @ 08:05)"
+    pm_info = report.get("pre_market_info") or {}
+    pm_src_html = ""
+    if pm_info.get("source"):
+        src_lbl = {"sip": "SIP (all exchanges, ~16 min delayed)", "iex": "IEX live"}.get(pm_info["source"], pm_info["source"])
+        other = ""
+        if pm_info.get("source") == "iex" and pm_info.get("sip_price") is not None:
+            other = f" | SIP {pm_info['sip_price']:.2f} @ {pm_info['sip_time']}"
+        elif pm_info.get("source") == "sip" and pm_info.get("iex_price") is not None:
+            other = f" | IEX {pm_info['iex_price']:.2f} @ {pm_info['iex_time']}"
+        pm_src_html = html.escape(f"{src_lbl} - {pm_info.get('reason', '')}{other}")
+
     # ---- "Other levels" (own 4-column section)
     price = report["current_price"]
     other_items = []
@@ -1288,6 +1377,7 @@ def render_ticker_html(report: dict) -> str:
         ("Pre-market price", (
             f"{report['pre_market']:.2f} @ {report.get('pre_market_time')} ET "
             f"({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
+            + (f"<br><span class=\"muted-small\">{pm_src_html}</span>" if pm_src_html else "")
             if report.get("pre_market") is not None else "N/A")),
         ("Today's range", f"{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})"),
         ("1h entry support", f"{report['entry_support']}"),
@@ -1604,6 +1694,7 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .chart-toggle {{ margin: 0 0 12px; }}
   .chart-toggle summary {{ list-style: none; cursor: pointer; color: var(--accent);
                            font-size: 12px; display: inline-block; margin-bottom: 6px; user-select: none; }}
+  .muted-small {{ color: var(--muted); font-size: 11px; }}
   .news-toggle summary {{ cursor: pointer; color: var(--accent); user-select: none; }}
   .news-toggle summary:hover {{ text-decoration: underline; }}
   .news-list {{ list-style: none; margin: 8px 0 2px; padding: 0; }}
