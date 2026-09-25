@@ -17,6 +17,7 @@ single pass/fail for "today."
 from __future__ import annotations
 import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 
 from boxindicators import (
     _normalize_columns,
@@ -127,11 +128,18 @@ def volatility_contraction_filter(
     bb = bollinger_band_width(df, bb_period)
     width = bb["BB_WIDTH"]
 
-    def _pct_rank(window: pd.Series) -> float:
-        current = window.iloc[-1]
-        return (window <= current).mean() * 100
-
-    pct_rank = width.rolling(lookback).apply(_pct_rank, raw=False)
+    # Percentile rank of the latest value inside each trailing `lookback`
+    # window, computed for all windows at once with numpy (same result as the
+    # former rolling(lookback).apply(...): windows containing NaN give NaN).
+    vals = width.to_numpy(dtype=float)
+    pct = np.full(len(vals), np.nan)
+    if len(vals) >= lookback:
+        win = sliding_window_view(vals, lookback)              # (n - lookback + 1, lookback)
+        current = win[:, -1:]
+        ranks = (win <= current).mean(axis=1) * 100
+        ranks[np.isnan(win).any(axis=1)] = np.nan
+        pct[lookback - 1:] = ranks
+    pct_rank = pd.Series(pct, index=width.index)
     ok = pct_rank <= percentile_threshold
     ok.name = "VOL_CONTRACTION_OK"
     return ok
@@ -172,29 +180,29 @@ def detect_box(
     box_height = box_top - box_bottom
     box_height_atr = box_height / a
 
-    top_touches = pd.Series(index=df.index, dtype=float)
-    bottom_touches = pd.Series(index=df.index, dtype=float)
+    highs = df["High"].to_numpy(dtype=float)
+    lows = df["Low"].to_numpy(dtype=float)
+    tops = box_top.to_numpy(dtype=float)
+    bottoms = box_bottom.to_numpy(dtype=float)
 
-    highs = df["High"].values
-    lows = df["Low"].values
-    tops = box_top.values
-    bottoms = box_bottom.values
-
+    # Count, for every bar at once, how many bars in its trailing `window`
+    # touched near the box top / bottom (numpy version of the former loop).
     n = len(df)
-    for i in range(n):
-        if i < window - 1 or np.isnan(tops[i]) or np.isnan(bottoms[i]):
-            top_touches.iloc[i] = np.nan
-            bottom_touches.iloc[i] = np.nan
-            continue
-        start = i - window + 1
-        seg_high = highs[start : i + 1]
-        seg_low = lows[start : i + 1]
-
-        top_band = tops[i] * (touch_tolerance_pct / 100.0)
-        bottom_band = bottoms[i] * (touch_tolerance_pct / 100.0)
-
-        top_touches.iloc[i] = np.sum(seg_high >= (tops[i] - top_band))
-        bottom_touches.iloc[i] = np.sum(seg_low <= (bottoms[i] + bottom_band))
+    top_arr = np.full(n, np.nan)
+    bot_arr = np.full(n, np.nan)
+    if n >= window:
+        tol = touch_tolerance_pct / 100.0
+        t = tops[window - 1:]
+        b = bottoms[window - 1:]
+        top_cnt = (sliding_window_view(highs, window) >= (t - t * tol)[:, None]).sum(axis=1).astype(float)
+        bot_cnt = (sliding_window_view(lows, window) <= (b + b * tol)[:, None]).sum(axis=1).astype(float)
+        invalid = np.isnan(t) | np.isnan(b)
+        top_cnt[invalid] = np.nan
+        bot_cnt[invalid] = np.nan
+        top_arr[window - 1:] = top_cnt
+        bot_arr[window - 1:] = bot_cnt
+    top_touches = pd.Series(top_arr, index=df.index)
+    bottom_touches = pd.Series(bot_arr, index=df.index)
 
     box_valid = (
         (top_touches >= min_touches)

@@ -58,7 +58,15 @@ def fetch_tickers(my_filters):
     screener.set_filter(filters_dict=my_filters)
 
     # 4. Fetch data
-    df = screener.screener_view()
+    # finvizfinance waits `sleep_sec` between result pages (20 tickers/page).
+    # The default of 1s cost ~13s for ~250 tickers; 0.2s is usually fine. If
+    # Finviz rejects the fast fetch (rate limit), retry once at the old 1s pace.
+    fast_sleep = CONFIG.get("FINVIZ_PAGE_SLEEP_SEC", 0.2)
+    try:
+        df = screener.screener_view(sleep_sec=fast_sleep)
+    except Exception as e:
+        print(f"Finviz fetch at {fast_sleep}s/page failed ({e}); retrying at 1s/page")
+        df = screener.screener_view(sleep_sec=1)
     if df is None or df.empty:
       print("No tickers matched the current filters.")
       return []

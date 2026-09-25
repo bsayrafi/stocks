@@ -90,10 +90,112 @@ _CACHE_TTL = dt.timedelta(minutes=2)
 # Data fetch
 # --------------------------------------------------------------------------
 
+# Batch-prefetched intraday bars for the current screener run (see
+# prefetch_intraday). While _PREFETCH_ACTIVE is True, fetch_intraday() only
+# reads from this dict and never calls yf.download itself -- yf.download is
+# not thread-safe, and fetch_intraday() is called from worker threads.
+_PREFETCHED: dict[str, Optional[pd.DataFrame]] = {}
+_PREFETCH_ACTIVE = False
+
+# Memo for _bias_from_ticker_df so SPY / sector-ETF bias is computed once
+# per run instead of once per ticker. Keyed by id(df); the df itself is
+# stored too so a recycled id can never return a stale result.
+_BIAS_MEMO: dict[int, tuple[pd.DataFrame, tuple]] = {}
+
+
+def _clean_intraday(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """Normalize a single-ticker intraday frame: flat columns, no empty rows,
+    index in US/Eastern. Returns None if nothing usable is left."""
+    if df is None or df.empty:
+        return None
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.dropna(how="all")
+    if df.empty:
+        return None
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    df.index = df.index.tz_convert(ET)
+    return df
+
+
+def _download_intraday_batch(tickers: list[str]) -> dict[str, Optional[pd.DataFrame]]:
+    """One yf.download call for many tickers -> {ticker: cleaned df or None}."""
+    out: dict[str, Optional[pd.DataFrame]] = {}
+    try:
+        raw = yf.download(
+            tickers,
+            period=INTRADAY_PERIOD,
+            interval=INTRADAY_INTERVAL,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=False,
+        )
+    except Exception:
+        return {t: None for t in tickers}
+
+    if raw is None or raw.empty:
+        return {t: None for t in tickers}
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        available = set(raw.columns.get_level_values(0))
+        for t in tickers:
+            out[t] = _clean_intraday(raw[t].copy()) if t in available else None
+    else:
+        # Single ticker came back with flat columns.
+        out[tickers[0]] = _clean_intraday(raw.copy())
+        for t in tickers[1:]:
+            out[t] = None
+    return out
+
+
+def prefetch_intraday(tickers, chunk_size: int = 200, include_market: bool = True) -> None:
+    """Batch-download 5-minute bars for every ticker (plus SPY and all sector
+    ETFs) BEFORE the parallel loop starts, and serve them from memory for the
+    rest of the run. Call from the main thread. Replaces one yf.download per
+    ticker with roughly one per `chunk_size` tickers."""
+    global _PREFETCH_ACTIVE
+    _PREFETCHED.clear()
+    _BIAS_MEMO.clear()
+
+    wanted = list(dict.fromkeys(tickers))  # de-dupe, keep order
+    if include_market:
+        for extra in ["SPY", *sorted(set(SECTOR_TO_ETF.values()))]:
+            if extra not in wanted:
+                wanted.append(extra)
+
+    for i in range(0, len(wanted), chunk_size):
+        _PREFETCHED.update(_download_intraday_batch(wanted[i:i + chunk_size]))
+
+    # One retry pass for anything that came back empty (transient failures).
+    missing = [t for t in wanted if _PREFETCHED.get(t) is None]
+    if missing:
+        for i in range(0, len(missing), chunk_size):
+            retry = _download_intraday_batch(missing[i:i + chunk_size])
+            _PREFETCHED.update({t: df for t, df in retry.items() if df is not None})
+
+    _PREFETCH_ACTIVE = True
+    got = sum(1 for t in wanted if _PREFETCHED.get(t) is not None)
+    print(f"Intraday prefetch: {got}/{len(wanted)} tickers have 5m bars")
+
+
+def clear_prefetched_intraday() -> None:
+    """Turn prefetch mode off and drop the stored bars."""
+    global _PREFETCH_ACTIVE
+    _PREFETCH_ACTIVE = False
+    _PREFETCHED.clear()
+    _BIAS_MEMO.clear()
+
+
 def fetch_intraday(ticker: str) -> Optional[pd.DataFrame]:
     """Fetch recent 5-minute bars for `ticker`, tz-converted to US/Eastern.
-    Cached for _CACHE_TTL to avoid hammering yfinance when you call this
-    every few minutes across many symbols."""
+    If prefetch_intraday() has run, bars come from memory (no network call).
+    Otherwise cached for _CACHE_TTL to avoid hammering yfinance when you call
+    this every few minutes across many symbols."""
+    if _PREFETCH_ACTIVE:
+        return _PREFETCHED.get(ticker)
+
     now = dt.datetime.utcnow()
     cached = _CACHE.get(ticker)
     if cached and (now - cached[0]) < _CACHE_TTL:
@@ -110,16 +212,9 @@ def fetch_intraday(ticker: str) -> Optional[pd.DataFrame]:
     except Exception:
         return None
 
-    if df is None or df.empty:
+    df = _clean_intraday(df)
+    if df is None:
         return None
-
-    # yfinance sometimes returns MultiIndex columns even for a single ticker.
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC")
-    df.index = df.index.tz_convert(ET)
 
     _CACHE[ticker] = (now, df)
     return df
@@ -149,6 +244,13 @@ def add_vwap_bands(session_df: pd.DataFrame) -> pd.DataFrame:
     cum_tp2v = ((tp ** 2) * vol).cumsum()
     variance = (cum_tp2v / cum_vol) - (df["vwap"] ** 2)
     df["vwap_std"] = np.sqrt(variance.clip(lower=0))
+
+    # A zero-volume bar is NaN in the cumulative sums above, which made that
+    # bar's VWAP NaN. VWAP doesn't change on a bar with no volume, so carry the
+    # last valid value forward. (Zero-volume bars at the very start of the
+    # session, before any trade, stay NaN -- there is no VWAP yet.)
+    df["vwap"] = df["vwap"].ffill()
+    df["vwap_std"] = df["vwap_std"].ffill()
 
     for mult in VWAP_BAND_MULTS:
         df[f"vwap_up_{mult}"] = df["vwap"] + mult * df["vwap_std"]
@@ -189,16 +291,24 @@ def compute_volume_profile(session_df: pd.DataFrame, bins: int = PROFILE_BINS) -
 
     # Distribute each bar's volume across the bins its High-Low range spans,
     # weighted evenly across those bins (a standard TPO/volume-profile approximation).
-    for _, row in session_df.iterrows():
-        b_lo, b_hi, b_vol = row["Low"], row["High"], row["Volume"]
-        if b_vol == 0 or b_hi <= b_lo:
-            continue
-        start_idx = np.searchsorted(edges, b_lo, side="right") - 1
-        end_idx = np.searchsorted(edges, b_hi, side="right") - 1
-        start_idx = max(0, min(start_idx, bins - 1))
-        end_idx = max(0, min(end_idx, bins - 1))
+    # Vectorized: each bar adds b_vol/span to every bin in [start, end]. The
+    # (bar, bin) pairs are expanded in bar order and summed with np.add.at,
+    # which adds them in that same order -- so the floating-point result is
+    # bit-identical to the former per-row loop (ties in the value area resolve
+    # the same way).
+    b_lo = session_df["Low"].to_numpy(dtype=float)
+    b_hi = session_df["High"].to_numpy(dtype=float)
+    b_vol = session_df["Volume"].to_numpy(dtype=float)
+    keep = (b_vol != 0) & (b_hi > b_lo)
+    if keep.any():
+        b_lo, b_hi, b_vol = b_lo[keep], b_hi[keep], b_vol[keep]
+        start_idx = np.clip(np.searchsorted(edges, b_lo, side="right") - 1, 0, bins - 1)
+        end_idx = np.clip(np.searchsorted(edges, b_hi, side="right") - 1, 0, bins - 1)
         span = end_idx - start_idx + 1
-        vol_at_bin[start_idx:end_idx + 1] += b_vol / span
+        share = b_vol / span
+        bar = np.repeat(np.arange(len(span)), span)                  # bar index per (bar, bin) pair
+        offset = np.arange(len(bar)) - np.repeat(np.cumsum(span) - span, span)
+        np.add.at(vol_at_bin, start_idx[bar] + offset, share[bar])
 
     if vol_at_bin.sum() == 0:
         return None
@@ -361,6 +471,19 @@ def _bias_from_ticker_df(df: Optional[pd.DataFrame]) -> tuple[str, Optional[floa
     return bias, vwap_now, prior_vp.poc
 
 
+def _bias_from_ticker_df_cached(df: Optional[pd.DataFrame]) -> tuple[str, Optional[float], Optional[float]]:
+    """Same as _bias_from_ticker_df, but computed once per distinct df object
+    (SPY / sector ETF frames are shared across every ticker in a run)."""
+    if df is None:
+        return _bias_from_ticker_df(df)
+    hit = _BIAS_MEMO.get(id(df))
+    if hit is not None and hit[0] is df:
+        return hit[1]
+    result = _bias_from_ticker_df(df)
+    _BIAS_MEMO[id(df)] = (df, result)
+    return result
+
+
 def analyze_intraday(
     symbol: str,
     sector: Optional[str] = None,
@@ -430,13 +553,13 @@ def analyze_intraday(
     # --- market (SPY) and sector bias ---------------------------------
     if spy_df is None:
         spy_df = fetch_intraday("SPY")
-    market_bias, market_vwap, market_prior_poc = _bias_from_ticker_df(spy_df)
+    market_bias, market_vwap, market_prior_poc = _bias_from_ticker_df_cached(spy_df)
     out["market_bias"] = market_bias
 
     etf = SECTOR_TO_ETF.get(sector) if sector else None
     if sector_df is None and etf:
         sector_df = fetch_intraday(etf)
-    sector_bias, sector_vwap, sector_prior_poc = _bias_from_ticker_df(sector_df)
+    sector_bias, sector_vwap, sector_prior_poc = _bias_from_ticker_df_cached(sector_df)
     out["sector"] = sector
     out["sector_etf"] = etf
     out["sector_bias"] = sector_bias

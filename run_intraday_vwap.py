@@ -20,6 +20,7 @@ import event_catalysts
 import buy_entry
 import screener
 import data_loader
+from profiling import reset_profile, print_profile_summary, profile_step
 import external_data
 import requests
 from sector_valuation import *
@@ -41,12 +42,23 @@ constants.CONFIG["ENABLE_SHORT_INTEREST"] = 1
 constants.CONFIG["ENABLE_EPS_DATA"] = 1
 constants.CONFIG["ENABLE_EARNINGS_DATES"] = 1
 constants.CONFIG["ENABLE_CASH_METRICS"] = 1
-constants.CONFIG["ENABLE_FINVIZ"] = 1
+constants.CONFIG["ENABLE_FINVIZ"] = 0          # off: slow per-ticker scrape; TargetMean / ShortPctFloat come from yfinance
 constants.CONFIG["ENABLE_CMF"] = 1
 constants.CONFIG["ENABLE_DIP_STRATEGY"]= 1
 constants.CONFIG["ENABLE_VALUATION"]= 1
 constants.CONFIG["DIP_LOOKBACK_DAYS"]= 5
 constants.CONFIG["DIP_QUALITY_MIN_SCORE"]= 50
+
+MAX_WORKERS = 6   # parallel ticker workers (was 6; watch the summary for Yahoo rate-limit outliers)
+
+# Same-day disk caches (see cached_ticker.py). The first run each day fetches fresh
+# data; later runs that day reuse it. Skipped for tickers within 2 days of earnings.
+#   CACHE_INFO_DAILY:    .info -> price-based ratios (market cap, P/E, EV/EBITDA, FCF yield)
+#                        reflect the first run of the day. Set to 0 to always fetch fresh.
+#   CACHE_ANALYST_DAILY: recommendations, EPS revisions / trend / estimates.
+constants.CONFIG["CACHE_INFO_DAILY"] = 1
+constants.CONFIG["CACHE_ANALYST_DAILY"] = 1
+constants.CONFIG["EARNINGS_FRESH_WINDOW_DAYS"] = 2
 
 
 
@@ -88,18 +100,20 @@ def loadData(num, force_redownload=False):
           #'RSI (14)': 'Not Overbought (<60)',
     }
   print(my_filters)
-  filteredTickers = tickers.get_tickers(my_filters)
+  with profile_step("main: finviz ticker list"):
+    filteredTickers = tickers.get_tickers(my_filters)
 
-  return data_loader.load_or_download_market_data(filteredTickers,force_redownload)
+  with profile_step("main: daily price download"):
+    return data_loader.load_or_download_market_data(filteredTickers,force_redownload)
 
 
 def     setEnable(num):
     constants.CONFIG["ENABLE_INTRADAY"] = num
     constants.CONFIG["SHOW_PREMARKET_PRICE"] = num
     constants.CONFIG["ENABLE_ANALYST_DATA"] = num
-    constants.CONFIG["ENABLE_FINVIZ"] = num
+    constants.CONFIG["ENABLE_FINVIZ"] = 0          # always off (see top of file)
     constants.CONFIG["ENABLE_RAW_STATEMENTS"] = num
-    constants.CONFIG["ENABLE_ALTMAN_ZSCORE"] = num
+    constants.CONFIG["ENABLE_ALTMAN_ZSCORE"] = 0   # always off: saves 2 statement requests per ticker
     constants.CONFIG["ENABLE_CMF"] = num
     constants.CONFIG["ENABLE_INTRADAY"] = num
     constants.CONFIG["ENABLE_DIP_STRATEGY"] = num
@@ -115,12 +129,14 @@ def runCoreScreener(num=2, force_redownload=True) :
     force_redownload=True
 
     start = time.time()
+    reset_profile()   # timings are per run (small caps and large caps reported separately)
 
     filteredTickers, data = loadData(num, force_redownload)
     extra_data_store = {}
 
     # 1. Check the macro regime first
-    market_bullish = screener.is_market_in_uptrend("SPY", 200)
+    with profile_step("main: SPY trend check"):
+        market_bullish = screener.is_market_in_uptrend("SPY", 200)
 
     # 2. Halt or warn based on the regime
     if not market_bullish:
@@ -132,7 +148,7 @@ def runCoreScreener(num=2, force_redownload=True) :
     #results2 = screener.evaluate_tickers(filteredTickers, data, extra_data_store=extra_data_store)
     results2 = screener.evaluate_tickers_parallel(
         filteredTickers, data,
-        max_workers=4,
+        max_workers=MAX_WORKERS,
         extra_data_store=extra_data_store,
     )
 
@@ -143,13 +159,15 @@ def runCoreScreener(num=2, force_redownload=True) :
 
         # 1. Sector Valuation
         if constants.CONFIG["ENABLE_COMPANY_INFO"] == 1 and constants.CONFIG["ENABLE_VALUATION"] == 1:
-            results_df2, sector_medians = add_sector_relative_valuation(results_df2)
+            with profile_step("main: sector valuation"):
+                results_df2, sector_medians = add_sector_relative_valuation(results_df2)
             print("\nSector median valuations (this batch):")
             print(sector_medians)
 
         # 2. Final Quality Scoring
         if constants.CONFIG["ENABLE_DIP_STRATEGY"] == 1:
-            results_df2 = combine_final_quality_scores(results_df2)
+            with profile_step("main: quality scores"):
+                results_df2 = combine_final_quality_scores(results_df2)
 
     else:
         print("No tickers passed the technical screening criteria. DataFrame is empty.")
@@ -168,7 +186,8 @@ def runCoreScreener(num=2, force_redownload=True) :
             "0": "FFF2F2",     # Soft Red
             #"Pending": "FFF2CC"     # Soft Yellow
         }
-        excel_writer.export_df_with_row_colors(
+        with profile_step("main: excel export"):
+          excel_writer.export_df_with_row_colors(
             df=results_df2,
             file_path=csv_filename,
             target_col="G1 ",
@@ -184,6 +203,7 @@ def runCoreScreener(num=2, force_redownload=True) :
 
     print(f"Run took {elapsed:.1f}s for {len(filteredTickers)} ticker(s) "
                         f"({elapsed/max(len(filteredTickers),1):.2f}s/ticker)")
+    print_profile_summary(elapsed, len(filteredTickers), max_workers=MAX_WORKERS)
 
 
    

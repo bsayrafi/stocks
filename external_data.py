@@ -29,9 +29,22 @@ def get_upgrades_downgrades(ticker):
 
 
 def get_analyst_price_targets(ticker):
-    """Analyst price target dict (low/high/mean/median/current), or None."""
+    """Analyst price target dict (low/high/mean/median/current), or None.
+    Read from ticker.info (already downloaded for company info) instead of
+    ticker.analyst_price_targets, which costs a separate request per ticker.
+    Same Yahoo source (financialData module)."""
     try:
-        return ticker.analyst_price_targets
+        info = ticker.info
+        targets = {
+            "current": info.get("currentPrice"),
+            "low": info.get("targetLowPrice"),
+            "high": info.get("targetHighPrice"),
+            "mean": info.get("targetMeanPrice"),
+            "median": info.get("targetMedianPrice"),
+        }
+        if all(v is None for k, v in targets.items() if k != "current"):
+            return None
+        return targets
     except Exception:
         return None
 
@@ -77,6 +90,52 @@ def get_earnings_dates(ticker, limit=CONFIG["EPS_DATES_LIMIT"]):
         return ticker.get_earnings_dates(limit=limit)
     except Exception:
         return None
+
+
+# --- Disk-cached versions of slow, slowly-changing data -----------------------
+# Earnings dates change rarely: cache for EARNINGS_CACHE_DAYS, but refresh
+# daily when a report is within EARNINGS_REFRESH_WINDOW_DAYS (dates get
+# confirmed / reported EPS filled in around the report).
+import pandas as _pd
+import disk_cache
+
+
+def _has_date_near_today(edates, window_days):
+    try:
+        idx = _pd.DatetimeIndex(edates.index)
+        now = _pd.Timestamp.now(tz=idx.tz) if idx.tz is not None else _pd.Timestamp.now()
+        return bool((abs(idx - now) <= _pd.Timedelta(days=window_days)).any())
+    except Exception:
+        return True   # can't tell -> treat as near (refresh daily)
+
+
+def get_earnings_dates_cached(symbol, ticker, limit=CONFIG["EPS_DATES_LIMIT"]):
+    """get_earnings_dates() with a disk cache (same DataFrame, same format)."""
+    ttl = CONFIG.get("EARNINGS_CACHE_DAYS", 7)
+    near_ttl = CONFIG.get("EARNINGS_NEAR_CACHE_DAYS", 1)
+    window = CONFIG.get("EARNINGS_REFRESH_WINDOW_DAYS", 10)
+
+    edates = disk_cache.get("earnings_dates", symbol, ttl)
+    if edates is not None and _has_date_near_today(edates, window):
+        edates = disk_cache.get("earnings_dates", symbol, near_ttl)   # stricter TTL near a report
+    disk_cache.record("earnings_dates", hit=edates is not None)
+    if edates is None:
+        edates = get_earnings_dates(ticker, limit)
+        if edates is not None:
+            disk_cache.put("earnings_dates", symbol, edates)
+    return edates
+
+
+def get_cashflow_cached(symbol, ticker):
+    """Annual cash flow statement (ticker.cashflow) with a disk cache.
+    Statements only change after a filing, so CASHFLOW_CACHE_DAYS (7) is safe."""
+    def fetch():
+        try:
+            cf = ticker.cashflow
+            return cf if cf is not None and not cf.empty else None
+        except Exception:
+            return None
+    return disk_cache.cached("cashflow", symbol, CONFIG.get("CASHFLOW_CACHE_DAYS", 7), fetch)
 
 
 # --- yfinance: short interest / options ---
@@ -400,9 +459,9 @@ def get_cash_metrics(symbol, ticker=None):
         "pegRatio": None,
     }
 
-    # --- Cash flow statement ---
+    # --- Cash flow statement (disk-cached; changes only after a filing) ---
     try:
-        cf = ticker.cashflow
+        cf = get_cashflow_cached(symbol, ticker)
         if cf is not None and not cf.empty:
             op_cash = cf.loc["Operating Cash Flow"] if "Operating Cash Flow" in cf.index else None
             capex_label = "Capital Expenditure" if "Capital Expenditure" in cf.index else (
@@ -579,7 +638,7 @@ def get_valuation_metrics(symbol, ticker=None):
         market_cap = info.get("marketCap")
         if market_cap:
             try:
-                cf = ticker.cashflow
+                cf = get_cashflow_cached(symbol, ticker)
                 if cf is not None and not cf.empty:
                     if "Free Cash Flow" in cf.index:
                         fcf = cf.loc["Free Cash Flow"].iloc[0]

@@ -15,6 +15,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from boxfilters import run_pipeline
 from intraday_strategy import * 
+from pre_market import prefetch_pre_market, get_best_pre_market_price
+from profiling import profile_step
+import disk_cache
+from cached_ticker import CachedTicker
 
 
 # 1. Create the session
@@ -30,8 +34,8 @@ yf_session.headers.update({
 
 # 2. Configure the retry rules (Notice I added 403 to the blocklist!)
 retry = Retry(
-    total=3,              
-    backoff_factor=2,     # Give Yahoo a slightly longer breather if it fails
+    total=2,              # was 3 -- long retry chains stalled single tickers for 13-17s
+    backoff_factor=0.5,   # was 2 -- short pauses between retries
     status_forcelist=[403, 429, 500, 502, 503, 504] 
 )
 
@@ -41,43 +45,36 @@ yf_session.mount('http://', adapter)
 
 
 
-def get_premarket_price(ticker: str) -> float | str:
-    """Fetches the absolute latest trade price using Alpaca's free IEX feed."""
-    
-    # The /snapshots endpoint returns the latest trade, quote, and daily bars all at once
-    url = "https://data.alpaca.markets/v2/stocks/snapshots"
-    
-    # We must explicitly request the 'iex' feed for the free tier to work
-    params = {
-        "symbols": ticker.upper(),
-        "feed": "iex"
-    }
-    
-    headers = {
-        "APCA-API-KEY-ID": "PKGT4VDNU6I3UJVRNUFYT34PK2",
-        "APCA-API-SECRET-KEY": "E9zQAKbXS5ATHJ399iqPGq5GaYqdKQq6DQDjcKrQQQDx"
-    }
-    
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            ticker_data = data.get(ticker.upper(), {})
-            
-            # Navigate the JSON to get the most recent trade price
-            latest_trade = ticker_data.get("latestTrade", {})
-            price = latest_trade.get("p")
-            
-            if price:
-                return float(price)
-                
-    except Exception as e:
-        print(f"Error fetching Alpaca data: {e}")
-        
-    return "N/A"
+# Sentinel: pre-market prices are being fetched in the background and will be
+# filled into the rows after the worker pool finishes (see evaluate_tickers_parallel).
+PREMARKET_DEFERRED = object()
+_D1_CLOSE_KEY = "__d1_close"   # temporary row key used to compute Pre-Market%; removed before output
+# Temporary row key marking where the intraday columns go when a ticker's
+# intraday analysis is deferred until the background download finishes.
+# Holds the ticker's sector; replaced by the intraday columns before output.
+_INTRADAY_KEY = "__intraday_deferred"
 
-def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=None, extra_data_store=None,tv_exchange_map=None):
+
+def _premarket_columns(pinfo, d1_close):
+    """Build the pre-market columns from a pre_market.py details dict.
+    Returns (columns_dict, latest_price_or_None)."""
+    cols = {"Pre-Market": "N/A", "Pre-Market%": "N/A", "Pre-Mkt Src": "N/A",
+            "Pre-Mkt Time": "N/A", "Pre-Mkt Reason": "N/A"}
+    latest_price = None
+    if pinfo:
+        cols["Pre-Mkt Reason"] = pinfo.get("reason") or "N/A"   # why that feed was chosen
+        if pinfo.get("price") is not None:
+            latest_price = float(pinfo["price"])
+            cols["Pre-Market"] = f"{latest_price:.2f} "
+            if d1_close:
+                cols["Pre-Market%"] = f"{(latest_price - d1_close) / d1_close * 100:.1f} "
+            cols["Pre-Mkt Src"] = (pinfo.get("source") or "N/A").upper()  # SIP (~16 min delayed) or IEX (live)
+            cols["Pre-Mkt Time"] = pinfo.get("time") or "N/A"             # HH:MM ET of the chosen 1-min bar
+    return cols, latest_price
+
+
+def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=None, extra_data_store=None,tv_exchange_map=None,
+                     premarket_prices=None, intraday_ready=None):
     """
     Evaluate each ticker across the last several completed sessions.
     Computes SMA, RSI, StochRSI, MACD, ADX, Bollinger Bands, OBV, volume,
@@ -94,7 +91,7 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
     ENABLE_NEWS_SENTIMENT=1, so the model is loaded once, not per ticker.
     """
     results2 = []
-    spy_df = fetch_intraday("SPY")
+    spy_df = None   # fetched on first use (from the prefetched bars when available)
     sector_cache: dict[str, pd.DataFrame] = {}
 
     for symbol in sp500_tickers:
@@ -105,54 +102,55 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
 
 
 
-            week52_high = df['Close'].max()
-            week52_low = df['Close'].min()
+            with profile_step("daily indicators + S/R", symbol):
+                week52_high = df['Close'].max()
+                week52_low = df['Close'].min()
 
-            df['SMA9'], df['SMA50'] = calculate_sma(df['Close'])
-            df['RSI'] = calculate_rsi(df['Close'])
-            df['StochK'], df['StochD'] = calculate_stoch_rsi(df['Close'])
-            df['MACD'], df['MACDSignal'], df['MACDHist'] = calculate_macd(df['Close'])
-            df['ADX'] = calculate_adx(df)
-            df['BBUpper'], df['BBMid'], df['BBLower'] = calculate_bollinger_bands(df['Close'])
-            df['OBV'] = calculate_obv(df['Close'], df['Volume'])
+                df['SMA9'], df['SMA50'] = calculate_sma(df['Close'])
+                df['RSI'] = calculate_rsi(df['Close'])
+                df['StochK'], df['StochD'] = calculate_stoch_rsi(df['Close'])
+                df['MACD'], df['MACDSignal'], df['MACDHist'] = calculate_macd(df['Close'])
+                df['ADX'] = calculate_adx(df)
+                df['BBUpper'], df['BBMid'], df['BBLower'] = calculate_bollinger_bands(df['Close'])
+                df['OBV'] = calculate_obv(df['Close'], df['Volume'])
 
-            # --- NEW: ATR, Stop Loss, and Take Profit Calculations ---
-            # 1. Calculate 14-period Daily ATR
-            high_low = df['High'] - df['Low']
-            high_close = (df['High'] - df['Close'].shift()).abs()
-            low_close = (df['Low'] - df['Close'].shift()).abs()
-            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            df['ATR'] = tr.rolling(14).mean()
-            daily_atr_val = float(df['ATR'].iloc[DAYm1_IDX])
+                # --- NEW: ATR, Stop Loss, and Take Profit Calculations ---
+                # 1. Calculate 14-period Daily ATR
+                high_low = df['High'] - df['Low']
+                high_close = (df['High'] - df['Close'].shift()).abs()
+                low_close = (df['Low'] - df['Close'].shift()).abs()
+                tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                df['ATR'] = tr.rolling(14).mean()
+                daily_atr_val = float(df['ATR'].iloc[DAYm1_IDX])
             
-            days = {i: df.iloc[i] for i in DAY_IDXS}
+                days = {i: df.iloc[i] for i in DAY_IDXS}
 
 
-            # 2. Get current price and nearest support
-            current_price = days[DAYm1_IDX]['Close']
+                # 2. Get current price and nearest support
+                current_price = days[DAYm1_IDX]['Close']
 
 
-            # --- NEW UPDATED BLOCK ---
-            sr = calculate_support_resistance(df)
-            res_levels = sr["resistance"] + [None] * (3 - len(sr["resistance"]))
-            sup_levels = sr["support"] + [None] * (3 - len(sr["support"]))
+                # --- NEW UPDATED BLOCK ---
+                sr = calculate_support_resistance(df)
+                res_levels = sr["resistance"] + [None] * (3 - len(sr["resistance"]))
+                sup_levels = sr["support"] + [None] * (3 - len(sr["support"]))
 
-            sr_block = {
-                "Support1": sup_levels[0],
-                "Support2": sup_levels[1],
-                "Support3": sup_levels[2],
-                "Resistance1": res_levels[0],
-                "Resistance2": res_levels[1],
-                "Resistance3": res_levels[2],
-            }
+                sr_block = {
+                    "Support1": sup_levels[0],
+                    "Support2": sup_levels[1],
+                    "Support3": sup_levels[2],
+                    "Resistance1": res_levels[0],
+                    "Resistance2": res_levels[1],
+                    "Resistance3": res_levels[2],
+                }
 
-            # --- NEW: Structural Stop and 1.5x Take Profit ---
-            # Use Support1 as the baseline. If no support is found, fallback to current price.
-            entry_support = sup_levels[0] if sup_levels[0] is not None else current_price
+                # --- NEW: Structural Stop and 1.5x Take Profit ---
+                # Use Support1 as the baseline. If no support is found, fallback to current price.
+                entry_support = sup_levels[0] if sup_levels[0] is not None else current_price
             
-            structural_stop = round(entry_support - (0.5 * daily_atr_val), 2)
-            risk_per_share = current_price - structural_stop
-            take_profit_target = round(current_price + (1.5 * risk_per_share), 2)
+                structural_stop = round(entry_support - (0.5 * daily_atr_val), 2)
+                risk_per_share = current_price - structural_stop
+                take_profit_target = round(current_price + (1.5 * risk_per_share), 2)
 
             vol_block = {f"D{DAY_LABELS[i]}Vol ": f"{days[i]['Volume']:.0f} " for i in DAY_ORDER}
             # 2. Calculate the average volume across the selected days
@@ -162,16 +160,19 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
             vol_block["DAvgVol "] = f"{avg_vol:.0f} "
 
             risingVol = (days[DAYm1_IDX]['Volume'] > days[DAYm2_IDX]['Volume']) and (days[DAYm2_IDX]['Volume'] > days[DAYm3_IDX]['Volume'])
-            pre_price_str = "N/A"
-            latest_price = None
+            d1_close = float(days[DAYm1_IDX]['Close'])
+            pm_cols, latest_price = _premarket_columns(None, d1_close)   # all "N/A" placeholders
 
-            if CONFIG["SHOW_PREMARKET_PRICE"] == 1:
+            if CONFIG["SHOW_PREMARKET_PRICE"] == 1 and premarket_prices is not PREMARKET_DEFERRED:
                 try:
-                    latest_price = get_premarket_price(symbol)                    
-                    pre_price_str = f"{float(latest_price):.2f} "
-                    pre_price_pct = (latest_price - days[DAYm1_IDX]['Close'])/days[DAYm1_IDX]['Close']
+                    if premarket_prices is not None:
+                        pinfo = premarket_prices.get(symbol)                      # batched lookup
+                    else:
+                        pinfo = get_best_pre_market_price(                        # single-ticker fallback
+                            symbol, CONFIG.get("ALPACA_HEADERS"), with_details=True)
+                    pm_cols, latest_price = _premarket_columns(pinfo, d1_close)
                 except Exception:
-                    pass
+                    latest_price = None
 
 
             passes_gap_filter = (
@@ -179,33 +180,34 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                or (latest_price is not None )
             )
 
-            gflags = {i: (1 if days[i]['Close'] > days[i]['Open'] else 0) for i in DAY_IDXS}
-            #cflags = {i: is_nice_green_candle(days[i]) for i in DAY_IDXS}
+            with profile_step("daily signals", symbol):
+                gflags = {i: (1 if days[i]['Close'] > days[i]['Open'] else 0) for i in DAY_IDXS}
+                #cflags = {i: is_nice_green_candle(days[i]) for i in DAY_IDXS}
 
-            rsig = 1 if (days[DAYm3_IDX]['RSI'] < days[DAYm2_IDX]['RSI'] and days[DAYm2_IDX]['RSI'] < days[DAYm1_IDX]['RSI']) else 0
+                rsig = 1 if (days[DAYm3_IDX]['RSI'] < days[DAYm2_IDX]['RSI'] and days[DAYm2_IDX]['RSI'] < days[DAYm1_IDX]['RSI']) else 0
 
-            stoch_buy_signal = is_stoch_rsi_buy_signal(df)
-            golden_cross = is_golden_cross(df)
-            macd_buy_signal = is_macd_buy_signal(df)
-            trending = is_trending(df)
-            bollinger_bounce = is_bollinger_bounce(df)
-            obv_rising = is_obv_rising(df)
-            volume_spike = is_volume_spike(df)
-            near_low_bounce = is_near_52week_low_bounce(days[DAYm1_IDX]['Close'], week52_low)
-            pct_from_high = (week52_high - days[DAYm1_IDX]['Close']) / (week52_high - week52_low)
-            pct_from_low = (days[DAYm1_IDX]['Close'] - week52_low) / (week52_high - week52_low)
+                stoch_buy_signal = is_stoch_rsi_buy_signal(df)
+                golden_cross = is_golden_cross(df)
+                macd_buy_signal = is_macd_buy_signal(df)
+                trending = is_trending(df)
+                bollinger_bounce = is_bollinger_bounce(df)
+                obv_rising = is_obv_rising(df)
+                volume_spike = is_volume_spike(df)
+                near_low_bounce = is_near_52week_low_bounce(days[DAYm1_IDX]['Close'], week52_low)
+                pct_from_high = (week52_high - days[DAYm1_IDX]['Close']) / (week52_high - week52_low)
+                pct_from_low = (days[DAYm1_IDX]['Close'] - week52_low) / (week52_high - week52_low)
 
-            cmf_buy = is_cmf_buy_signal(df)
-            bull_div = is_bullish_divergence(df)
-            trend_pullback = is_trend_pullback_buy(df)
-            bear_div = is_bearish_divergence(df)
-            death_cross = is_death_cross(df)
-            exhaustion_sell = is_exhaustion_sell(df)
+                cmf_buy = is_cmf_buy_signal(df)
+                bull_div = is_bullish_divergence(df)
+                trend_pullback = is_trend_pullback_buy(df)
+                bear_div = is_bearish_divergence(df)
+                death_cross = is_death_cross(df)
+                exhaustion_sell = is_exhaustion_sell(df)
 
-            sig = compute_signals(df, days, DAYm1_IDX, week52_low)
-            sig["BuyScore"] = buy_score(sig)
-            sig["SellScore"] = sell_score(sig)
-            sig["HighQualityBuy"] = is_high_quality_buy(sig)
+                sig = compute_signals(df, days, DAYm1_IDX, week52_low)
+                sig["BuyScore"] = buy_score(sig)
+                sig["SellScore"] = sell_score(sig)
+                sig["HighQualityBuy"] = is_high_quality_buy(sig)
 
             # --- Build repeating per-day field blocks ---
             oc_block = {}
@@ -230,156 +232,175 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
 
             ])
             
-            yf_ticker = yf.Ticker(symbol,session=yf_session) if needs_yf_ticker else None
+            with profile_step("company info (first .info fetch)", symbol, enabled=CONFIG["ENABLE_COMPANY_INFO"] == 1):
+                # CachedTicker = yf.Ticker with same-day disk caching of .info and analyst
+                # data (skipped near earnings) -- see cached_ticker.py
+                yf_ticker = CachedTicker(symbol, session=yf_session) if needs_yf_ticker else None
 
-            company_block = {}
-            if CONFIG["ENABLE_COMPANY_INFO"] == 1:
-                company_info = get_company_info(symbol, yf_ticker)
-                company_block["Name"] = company_info["Name"]
-                company_block["Sector"] = company_info["Sector"]
-                company_block["Industry"] = company_info["Industry"]
-                company_block["MarketCap"] = company_info["MarketCap"]
+                company_block = {}
+                if CONFIG["ENABLE_COMPANY_INFO"] == 1:
+                    company_info = get_company_info(symbol, yf_ticker)
+                    company_block["Name"] = company_info["Name"]
+                    company_block["Sector"] = company_info["Sector"]
+                    company_block["Industry"] = company_info["Industry"]
+                    company_block["MarketCap"] = company_info["MarketCap"]
 
             # --- Analyst ratings / price targets ---
-            analyst_block = {}
-            if CONFIG["ENABLE_ANALYST_DATA"] == 1:
+            with profile_step("analyst data", symbol, enabled=CONFIG["ENABLE_ANALYST_DATA"] == 1):
+                analyst_block = {}
+                if CONFIG["ENABLE_ANALYST_DATA"] == 1:
                 
-                rec_mean = get_recommendation_mean(yf_ticker)
-                targets = get_analyst_price_targets(yf_ticker)
-                analyst_block["RecMean"] = rec_mean
-                analyst_block["TargetMean"] = targets.get("mean") if isinstance(targets, dict) else None
-                analyst_block["TargetHigh"] = targets.get("high") if isinstance(targets, dict) else None
-                analyst_block["TargetLow"] = targets.get("low") if isinstance(targets, dict) else None
+                    with profile_step("  analyst: rec mean", symbol):
+                        rec_mean = get_recommendation_mean(yf_ticker)
+                    with profile_step("  analyst: price targets", symbol):
+                        targets = get_analyst_price_targets(yf_ticker)
+                    analyst_block["RecMean"] = rec_mean
+                    analyst_block["TargetMean"] = targets.get("mean") if isinstance(targets, dict) else None
+                    analyst_block["TargetHigh"] = targets.get("high") if isinstance(targets, dict) else None
+                    analyst_block["TargetLow"] = targets.get("low") if isinstance(targets, dict) else None
                 
-                rec_breakdown = get_yahoo_recommendation_breakdown(symbol, yf_ticker)
-                analyst_block.update(rec_breakdown)
+                    with profile_step("  analyst: rec breakdown", symbol):
+                        rec_breakdown = get_yahoo_recommendation_breakdown(symbol, yf_ticker)
+                    analyst_block.update(rec_breakdown)
 
-                # NEW: derived smart-signal block, reuses same yf_ticker
-                smart_signals = extract_smart_analyst_signals(
-                    yf_ticker, current_price=days[DAYm1_IDX]['Close']
-                )
-                analyst_block.update(smart_signals)
+                    # NEW: derived smart-signal block, reuses same yf_ticker
+                    with profile_step("  analyst: smart signals", symbol):
+                        smart_signals = extract_smart_analyst_signals(
+                            yf_ticker, current_price=days[DAYm1_IDX]['Close']
+                        )
+                    analyst_block.update(smart_signals)
 
             # --- TradingView TA summary rating ---
-            tv_block = {}
-            if CONFIG["ENABLE_TRADINGVIEW"] == 1:
-                tv_rating, tv_votes = get_tradingview_rating_cached(symbol, tv_exchange_map or {})
-                tv_block["TVRating"] = tv_rating
-                tv_block["TVBuy"] = tv_votes.get("BUY") if tv_votes else None
-                tv_block["TVSell"] = tv_votes.get("SELL") if tv_votes else None
-                tv_block["TVNeutral"] = tv_votes.get("NEUTRAL") if tv_votes else None
+            with profile_step("tradingview", symbol, enabled=CONFIG["ENABLE_TRADINGVIEW"] == 1):
+                tv_block = {}
+                if CONFIG["ENABLE_TRADINGVIEW"] == 1:
+                    tv_rating, tv_votes = get_tradingview_rating_cached(symbol, tv_exchange_map or {})
+                    tv_block["TVRating"] = tv_rating
+                    tv_block["TVBuy"] = tv_votes.get("BUY") if tv_votes else None
+                    tv_block["TVSell"] = tv_votes.get("SELL") if tv_votes else None
+                    tv_block["TVNeutral"] = tv_votes.get("NEUTRAL") if tv_votes else None
 
             # --- Finviz target price / short float ---
-            finviz_block = {}
-            if CONFIG["ENABLE_FINVIZ"] == 1:
-                fz_target, fz_short_float = get_finviz_fundamentals(symbol)
-                finviz_block["FinvizTarget"] = fz_target
-                finviz_block["FinvizShortFloat"] = fz_short_float
+            with profile_step("finviz", symbol, enabled=CONFIG["ENABLE_FINVIZ"] == 1):
+                finviz_block = {}
+                if CONFIG["ENABLE_FINVIZ"] == 1:
+                    fz_target, fz_short_float = get_finviz_fundamentals(symbol)
+                    finviz_block["FinvizTarget"] = fz_target
+                    finviz_block["FinvizShortFloat"] = fz_short_float
 
             # --- FinBERT news sentiment ---
-            sentiment_block = {}
-            if CONFIG["ENABLE_NEWS_SENTIMENT"] == 1:
-                sentiment_results = get_news_sentiment(yf_ticker, nlp_pipeline=finbert_pipeline)
-                if sentiment_results:
-                    top_label = sentiment_results[0][1][0]['label']
-                    top_score = sentiment_results[0][1][0]['score']
-                    sentiment_block["NewsSentiment"] = top_label
-                    sentiment_block["NewsSentimentScore"] = round(float(top_score), 3)
-                else:
-                    sentiment_block["NewsSentiment"] = None
-                    sentiment_block["NewsSentimentScore"] = None
+            with profile_step("news sentiment", symbol, enabled=CONFIG["ENABLE_NEWS_SENTIMENT"] == 1):
+                sentiment_block = {}
+                if CONFIG["ENABLE_NEWS_SENTIMENT"] == 1:
+                    sentiment_results = get_news_sentiment(yf_ticker, nlp_pipeline=finbert_pipeline)
+                    if sentiment_results:
+                        top_label = sentiment_results[0][1][0]['label']
+                        top_score = sentiment_results[0][1][0]['score']
+                        sentiment_block["NewsSentiment"] = top_label
+                        sentiment_block["NewsSentimentScore"] = round(float(top_score), 3)
+                    else:
+                        sentiment_block["NewsSentiment"] = None
+                        sentiment_block["NewsSentimentScore"] = None
 
             # --- Short interest ---
-            short_block = {}
-            if CONFIG["ENABLE_SHORT_INTEREST"] == 1:
-                short_pct, short_ratio = get_short_interest(yf_ticker)
-                short_block["ShortPctFloat"] = short_pct
-                short_block["ShortRatio"] = short_ratio
+            with profile_step("short interest", symbol, enabled=CONFIG["ENABLE_SHORT_INTEREST"] == 1):
+                short_block = {}
+                if CONFIG["ENABLE_SHORT_INTEREST"] == 1:
+                    short_pct, short_ratio = get_short_interest(yf_ticker)
+                    short_block["ShortPctFloat"] = short_pct
+                    short_block["ShortRatio"] = short_ratio
 
             # --- EPS revisions / trend / estimate (current-quarter row, if present) ---
-            eps_block = {}
-            if CONFIG["ENABLE_EPS_DATA"] == 1:
-                try:
-                    eps_rev = get_eps_revisions(yf_ticker)
-                    if eps_rev is not None and not eps_rev.empty and '0q' in eps_rev.index:
-                        row = eps_rev.loc['0q']
-                        eps_block["EPSRevUp7d"] = row.get('upLast7days')
-                        eps_block["EPSRevDown7d"] = row.get('downLast7days')
-                except Exception:
-                    pass
-                try:
-                    eps_trend = get_eps_trend(yf_ticker)
-                    if eps_trend is not None and not eps_trend.empty and '0q' in eps_trend.index:
-                        row = eps_trend.loc['0q']
-                        eps_block["EPSTrendCurrent"] = row.get('current')
-                        eps_block["EPSTrend30dAgo"] = row.get('30daysAgo')
-                        eps_block["EPSDiff"] = eps_block["EPSTrendCurrent"] - eps_block["EPSTrend30dAgo"]
+            with profile_step("EPS data", symbol, enabled=CONFIG["ENABLE_EPS_DATA"] == 1):
+                eps_block = {}
+                if CONFIG["ENABLE_EPS_DATA"] == 1:
+                    try:
+                        eps_rev = get_eps_revisions(yf_ticker)
+                        if eps_rev is not None and not eps_rev.empty and '0q' in eps_rev.index:
+                            row = eps_rev.loc['0q']
+                            eps_block["EPSRevUp7d"] = row.get('upLast7days')
+                            eps_block["EPSRevDown7d"] = row.get('downLast7days')
+                    except Exception:
+                        pass
+                    try:
+                        eps_trend = get_eps_trend(yf_ticker)
+                        if eps_trend is not None and not eps_trend.empty and '0q' in eps_trend.index:
+                            row = eps_trend.loc['0q']
+                            eps_block["EPSTrendCurrent"] = row.get('current')
+                            eps_block["EPSTrend30dAgo"] = row.get('30daysAgo')
+                            eps_block["EPSDiff"] = eps_block["EPSTrendCurrent"] - eps_block["EPSTrend30dAgo"]
 
-                except Exception:
-                    pass
-                try:
-                    est = get_earnings_estimate(yf_ticker)
-                    if est is not None and not est.empty and '0q' in est.index:
-                        row = est.loc['0q']
-                        eps_block["EPSEstAvg"] = row.get('avg')
-                        eps_block["EPSEstNumAnalysts"] = row.get('numberOfAnalysts')
-                        eps_block["EPSEstGrowth"] = row.get('growth')  # forward growth estimate, current quarter
+                    except Exception:
+                        pass
+                    est = None
+                    try:
+                        est = get_earnings_estimate(yf_ticker)
+                        if est is not None and not est.empty and '0q' in est.index:
+                            row = est.loc['0q']
+                            eps_block["EPSEstAvg"] = row.get('avg')
+                            eps_block["EPSEstNumAnalysts"] = row.get('numberOfAnalysts')
+                            eps_block["EPSEstGrowth"] = row.get('growth')  # forward growth estimate, current quarter
 
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
 
-                # Also pull the full-year growth estimate ('0y') for a longer-horizon view
-                try:
-                    est_full = get_earnings_estimate(yf_ticker)
-                    if est_full is not None and not est_full.empty and '0y' in est_full.index:
-                        row_y = est_full.loc['0y']
-                        eps_block["EPSEstGrowthFY"] = row_y.get('growth')
-                except Exception:
-                    pass
+                    # Also pull the full-year growth estimate ('0y') for a longer-horizon view
+                    # (reuses the estimate frame fetched above -- no second request)
+                    try:
+                        est_full = est
+                        if est_full is not None and not est_full.empty and '0y' in est_full.index:
+                            row_y = est_full.loc['0y']
+                            eps_block["EPSEstGrowthFY"] = row_y.get('growth')
+                    except Exception:
+                        pass
 
-                try:
-                    TPE = get_PE(yf_ticker)
-                    if TPE is not None:
-                        eps_block["TPE"] = f"{TPE:.2f} "
-                except Exception:
-                    pass
-                try:
-                    FPE = get_FPE(yf_ticker)
-                    if FPE is not None:
-                        eps_block["FPE"] = f"{FPE:.2f} "
-                except Exception:
-                    pass
+                    try:
+                        TPE = get_PE(yf_ticker)
+                        if TPE is not None:
+                            eps_block["TPE"] = f"{TPE:.2f} "
+                    except Exception:
+                        pass
+                    try:
+                        FPE = get_FPE(yf_ticker)
+                        if FPE is not None:
+                            eps_block["FPE"] = f"{FPE:.2f} "
+                    except Exception:
+                        pass
 
             # --- Next earnings date ---
-            earnings_block = {}
-            if CONFIG["ENABLE_EARNINGS_DATES"] == 1:
-                try:
-                    edates = get_earnings_dates(yf_ticker)
-                    if edates is not None and not edates.empty:
-                        earnings_block["NextEarningsDate"] = str(edates.index[0].date())
-                except Exception:
-                    pass
+            with profile_step("earnings dates", symbol, enabled=CONFIG["ENABLE_EARNINGS_DATES"] == 1):
+                earnings_block = {}
+                edates = None   # fetched once here, reused by the dip block below
+                if CONFIG["ENABLE_EARNINGS_DATES"] == 1:
+                    try:
+                        edates = get_earnings_dates_cached(symbol, yf_ticker)   # disk-cached
+                        if edates is not None and not edates.empty:
+                            earnings_block["NextEarningsDate"] = str(edates.index[0].date())
+                    except Exception:
+                        pass
 
             # --- Altman Z-score (Financial Modeling Prep) ---
-            altman_block = {}
-            if CONFIG["ENABLE_ALTMAN_ZSCORE"] == 1:
-                altman_block["AltmanZ"] = get_altman_zscore_exact(symbol,yf_ticker)
+            with profile_step("altman z-score", symbol, enabled=CONFIG["ENABLE_ALTMAN_ZSCORE"] == 1):
+                altman_block = {}
+                if CONFIG["ENABLE_ALTMAN_ZSCORE"] == 1:
+                    altman_block["AltmanZ"] = get_altman_zscore_exact(symbol,yf_ticker)
 
-            cash_block = {}
-            if CONFIG["ENABLE_CASH_METRICS"] == 1:
-                cash_metrics = get_cash_metrics(symbol, yf_ticker)
-                cash_block["LatestFCF"] = cash_metrics["LatestFCF"]
-                cash_block["FCFYield"] = cash_metrics["FCFYield"]
-                cash_block["FCFMargin"] = cash_metrics["FCFMargin"]
-                cash_block["OperatingCashFlow"] = cash_metrics["OperatingCashFlow"]
-                cash_block["CapEx"] = cash_metrics["CapEx"]
-                cash_block["TotalCash"] = cash_metrics["TotalCash"]
-                cash_block["TotalDebt"] = cash_metrics["TotalDebt"]
-                cash_block["NetCashPosition"] = cash_metrics["NetCashPosition"]
-                cash_block["CashToDebt"] = cash_metrics["CashToDebt"]
-                cash_block["CurrentRatio"] = cash_metrics["CurrentRatio"]
-                cash_block["QuickRatio"] = cash_metrics["QuickRatio"]
-                cash_block["pegRatio"] = cash_metrics["pegRatio"]
+            with profile_step("cash metrics", symbol, enabled=CONFIG["ENABLE_CASH_METRICS"] == 1):
+                cash_block = {}
+                if CONFIG["ENABLE_CASH_METRICS"] == 1:
+                    cash_metrics = get_cash_metrics(symbol, yf_ticker)
+                    cash_block["LatestFCF"] = cash_metrics["LatestFCF"]
+                    cash_block["FCFYield"] = cash_metrics["FCFYield"]
+                    cash_block["FCFMargin"] = cash_metrics["FCFMargin"]
+                    cash_block["OperatingCashFlow"] = cash_metrics["OperatingCashFlow"]
+                    cash_block["CapEx"] = cash_metrics["CapEx"]
+                    cash_block["TotalCash"] = cash_metrics["TotalCash"]
+                    cash_block["TotalDebt"] = cash_metrics["TotalDebt"]
+                    cash_block["NetCashPosition"] = cash_metrics["NetCashPosition"]
+                    cash_block["CashToDebt"] = cash_metrics["CashToDebt"]
+                    cash_block["CurrentRatio"] = cash_metrics["CurrentRatio"]
+                    cash_block["QuickRatio"] = cash_metrics["QuickRatio"]
+                    cash_block["pegRatio"] = cash_metrics["pegRatio"]
 
 
 
@@ -399,72 +420,90 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
 
             #dip strategy for stock with best fundamentals
             # ... inside the ENABLE_DIP_STRATEGY block ...
-            dip_block = {}
-            if CONFIG["ENABLE_DIP_STRATEGY"] == 1:
-                dip_pct = calculate_dip_pct(df, days)
+            with profile_step("dip strategy", symbol, enabled=CONFIG["ENABLE_DIP_STRATEGY"] == 1):
+                dip_block = {}
+                if CONFIG["ENABLE_DIP_STRATEGY"] == 1:
+                    dip_pct = calculate_dip_pct(df, days)
 
-                edates_df = None
-                if CONFIG["ENABLE_EARNINGS_DATES"] == 1:
-                    edates_df = get_earnings_dates(yf_ticker)
-                near_earnings = is_near_earnings(edates_df)
+                    edates_df = edates if CONFIG["ENABLE_EARNINGS_DATES"] == 1 else None
+                    near_earnings = is_near_earnings(edates_df)
 
-                base_quality_score = calculate_base_quality_score(
-                    cash_block if CONFIG["ENABLE_CASH_METRICS"] == 1 else None,
-                    altman_block.get("AltmanZ") if CONFIG["ENABLE_ALTMAN_ZSCORE"] == 1 else None,
-                    analyst_block if CONFIG["ENABLE_ANALYST_DATA"] == 1 else None,
-                    eps_block if CONFIG["ENABLE_EPS_DATA"] == 1 else None,
-                )
+                    base_quality_score = calculate_base_quality_score(
+                        cash_block if CONFIG["ENABLE_CASH_METRICS"] == 1 else None,
+                        altman_block.get("AltmanZ") if CONFIG["ENABLE_ALTMAN_ZSCORE"] == 1 else None,
+                        analyst_block if CONFIG["ENABLE_ANALYST_DATA"] == 1 else None,
+                        eps_block if CONFIG["ENABLE_EPS_DATA"] == 1 else None,
+                    )
 
-                dip_block["DipPct"] = dip_pct
-                dip_block["NearEarnings"] = near_earnings
-                dip_block["BaseQualityScore"] = base_quality_score
-                # QualityScore and QualityDipBuy are NOT set here — computed after the
-                # full batch runs, once sector-relative valuation is available.
+                    dip_block["DipPct"] = dip_pct
+                    dip_block["NearEarnings"] = near_earnings
+                    dip_block["BaseQualityScore"] = base_quality_score
+                    # QualityScore and QualityDipBuy are NOT set here — computed after the
+                    # full batch runs, once sector-relative valuation is available.
 
-            box_result = run_pipeline(df)
-            box_row = box_result.iloc[-1]  # latest bar's readout
+            with profile_step("box filters", symbol):
+                box_result = run_pipeline(df)
+                box_row = box_result.iloc[-1]  # latest bar's readout
 
-            box_block = {
-                "Box_Liquidity_OK": box_row["LIQUIDITY_OK"],
-                "Box_Trend_OK": box_row["TREND_OK"],
-                "Box_Not_Choppy": box_row["NOT_CHOPPY"],
-                "Box_Chop_Value": round(box_row["CHOP_VALUE"], 1) if pd.notna(box_row["CHOP_VALUE"]) else None,
-                "Box_VolContraction_OK": box_row["VOL_CONTRACTION_OK"],
-                "Box_Top": round(box_row["BOX_TOP"], 2) if pd.notna(box_row["BOX_TOP"]) else None,
-                "Box_Bottom": round(box_row["BOX_BOTTOM"], 2) if pd.notna(box_row["BOX_BOTTOM"]) else None,
-                "Box_Height_ATR": round(box_row["BOX_HEIGHT_ATR"], 2) if pd.notna(box_row["BOX_HEIGHT_ATR"]) else None,
-                "Box_Top_Touches": box_row["TOP_TOUCHES"],
-                "Box_Bottom_Touches": box_row["BOTTOM_TOUCHES"],
-                "Box_Valid": box_row["BOX_VALID"],
-                "Box_Breakout_Confirmed": box_row["BREAKOUT_CONFIRMED"],
-                "Box_Signal": box_row["SIGNAL"],
-                "Box_Avg_Volume_50D": round(box_row["AVG_VOLUME_50D"], 0) if pd.notna(box_row["AVG_VOLUME_50D"]) else None,
-                "Box_Required_Volume": round(box_row["REQUIRED_BREAKOUT_VOLUME"], 0) if pd.notna(box_row["REQUIRED_BREAKOUT_VOLUME"]) else None,
-                "Box_Pct_To_Top": round(box_row["PCT_TO_BOX_TOP"], 2) if pd.notna(box_row["PCT_TO_BOX_TOP"]) else None,
-                "Box_Pct_Above_Bottom": round(box_row["PCT_ABOVE_BOX_BOTTOM"], 2) if pd.notna(box_row["PCT_ABOVE_BOX_BOTTOM"]) else None,
-            }
+                box_block = {
+                    "Box_Liquidity_OK": box_row["LIQUIDITY_OK"],
+                    "Box_Trend_OK": box_row["TREND_OK"],
+                    "Box_Not_Choppy": box_row["NOT_CHOPPY"],
+                    "Box_Chop_Value": round(box_row["CHOP_VALUE"], 1) if pd.notna(box_row["CHOP_VALUE"]) else None,
+                    "Box_VolContraction_OK": box_row["VOL_CONTRACTION_OK"],
+                    "Box_Top": round(box_row["BOX_TOP"], 2) if pd.notna(box_row["BOX_TOP"]) else None,
+                    "Box_Bottom": round(box_row["BOX_BOTTOM"], 2) if pd.notna(box_row["BOX_BOTTOM"]) else None,
+                    "Box_Height_ATR": round(box_row["BOX_HEIGHT_ATR"], 2) if pd.notna(box_row["BOX_HEIGHT_ATR"]) else None,
+                    "Box_Top_Touches": box_row["TOP_TOUCHES"],
+                    "Box_Bottom_Touches": box_row["BOTTOM_TOUCHES"],
+                    "Box_Valid": box_row["BOX_VALID"],
+                    "Box_Breakout_Confirmed": box_row["BREAKOUT_CONFIRMED"],
+                    "Box_Signal": box_row["SIGNAL"],
+                    "Box_Avg_Volume_50D": round(box_row["AVG_VOLUME_50D"], 0) if pd.notna(box_row["AVG_VOLUME_50D"]) else None,
+                    "Box_Required_Volume": round(box_row["REQUIRED_BREAKOUT_VOLUME"], 0) if pd.notna(box_row["REQUIRED_BREAKOUT_VOLUME"]) else None,
+                    "Box_Pct_To_Top": round(box_row["PCT_TO_BOX_TOP"], 2) if pd.notna(box_row["PCT_TO_BOX_TOP"]) else None,
+                    "Box_Pct_Above_Bottom": round(box_row["PCT_ABOVE_BOX_BOTTOM"], 2) if pd.notna(box_row["PCT_ABOVE_BOX_BOTTOM"]) else None,
+                }
             
 
-            valuation_block = {}
-            if CONFIG["ENABLE_VALUATION"] == 1:
-                valuation_block = get_valuation_metrics(symbol, ticker=yf_ticker)
+            with profile_step("valuation", symbol, enabled=CONFIG["ENABLE_VALUATION"] == 1):
+                valuation_block = {}
+                if CONFIG["ENABLE_VALUATION"] == 1:
+                    valuation_block = get_valuation_metrics(symbol, ticker=yf_ticker)
 
 
-            intraday_block = {} 
-            if CONFIG["ENABLE_INTRADAY"] == 1:
+            # Intraday analysis runs now if the intraday bars are available
+            # (intraday_ready() is True, or no background download is in use);
+            # otherwise a placeholder is left in the row and the analysis is
+            # done in a second pass once the background download finishes.
+            intraday_on = CONFIG["ENABLE_INTRADAY"] == 1
+            intraday_now = intraday_on and (intraday_ready is None or intraday_ready())
+            with profile_step("intraday analysis", symbol, enabled=intraday_now):
+                intraday_block = {} 
+                if intraday_on:
 
-                sector = company_block["Sector"]   # however your screener stores it
-                etf = SECTOR_TO_ETF.get(sector)
-                if etf and etf not in sector_cache:
-                    sector_cache[etf] = fetch_intraday(etf)
+                    # get_company_info stores sectors with underscores ("Financial_Services"),
+                    # but SECTOR_TO_ETF uses spaces -- convert back so multi-word sectors match.
+                    sector = company_block.get("Sector")
+                    if isinstance(sector, str):
+                        sector = sector.replace("_", " ")
 
-                intraday_block = analyze_intraday(
-                            symbol,
-                            sector=sector,
-                            spy_df=spy_df,
-                            sector_df=sector_cache.get(etf),
-                            daily_df=df,
-                )
+                    if intraday_now:
+                        if spy_df is None:
+                            spy_df = fetch_intraday("SPY")
+                        etf = SECTOR_TO_ETF.get(sector)
+                        if etf and etf not in sector_cache:
+                            sector_cache[etf] = fetch_intraday(etf)
+
+                        intraday_block = analyze_intraday(
+                                    symbol,
+                                    sector=sector,
+                                    spy_df=spy_df,
+                                    sector_df=sector_cache.get(etf),
+                                    daily_df=df,
+                        )
+                    else:
+                        intraday_block = {_INTRADAY_KEY: sector}   # filled in later, same column position
 
 
             if passes_gap_filter:
@@ -476,8 +515,10 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                     "ATR(14) ": f"{daily_atr_val:.2f} ",
                     "Sug. Stop ": f"{structural_stop:.2f} ",
                     "Take Profit ": f"{take_profit_target:.2f} ",
-                    **({"Pre-Market": pre_price_str} if CONFIG["SHOW_PREMARKET_PRICE"] == 1 else {}),
-                    **({"Pre-Market%": f"{pre_price_pct*100:.1f} ",} if CONFIG["SHOW_PREMARKET_PRICE"] == 1 else {}),
+                    # Pre-Market, Pre-Market%, Pre-Mkt Src, Pre-Mkt Time, Pre-Mkt Reason
+                    # (placeholders in deferred mode; filled in after the pool finishes)
+                    **(pm_cols if CONFIG["SHOW_PREMARKET_PRICE"] == 1 else {}),
+                    **({_D1_CLOSE_KEY: d1_close} if premarket_prices is PREMARKET_DEFERRED else {}),
                     "50SMA ": f"{days[DAYm1_IDX]['SMA50']:.2f} ",
                     **sr_block,
                     **vol_block,
@@ -538,11 +579,146 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
                               **kwargs):
     results = []
 
-    def process_one(symbol):
-        time.sleep(random.uniform(0.2, 1.2))
-        return evaluate_tickers([symbol], data, verbose_errors=False, 
-            finbert_pipeline=None, extra_data_store=None,tv_exchange_map=None, **kwargs)
+    # --- Pre-market prices (pre_market.py) ---
+    # Batched 1-min bars for today's pre-market on SIP (16-min delayed) and IEX
+    # (live). This only talks to Alpaca, so it runs in a BACKGROUND thread at
+    # the same time as the intraday prefetch and the worker pool (which talk to
+    # Yahoo), and its columns are filled into the rows afterwards.
+    # Exception: FILTER_PREMARKET_GAP_UP needs the price while building rows,
+    # so in that mode it is fetched up front as before.
+    premarket_prices = None
+    premarket_future = None
+    premarket_bg = None
+    if CONFIG["SHOW_PREMARKET_PRICE"] == 1:
+        if CONFIG["FILTER_PREMARKET_GAP_UP"] == 1:
+            premarket_prices = _fetch_premarket(sp500_tickers)
+        else:
+            premarket_bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="premarket")
+            premarket_future = premarket_bg.submit(_fetch_premarket, sp500_tickers)
+            premarket_prices = PREMARKET_DEFERRED
 
+    # --- Intraday 5m bars (intraday_strategy.py) ---
+    # Batched yf.download for every ticker + SPY + sector ETFs, run in a
+    # BACKGROUND thread while the workers do everything else. The workers never
+    # call yf.download themselves, so this is the only yf.download running
+    # (yf.download is not safe to run twice at once). A worker that reaches a
+    # ticker's intraday step after the download has finished analyses it
+    # immediately; earlier tickers are finished in a second pass below.
+    intraday_future = None
+    intraday_bg = None
+    intraday_ready = None
+    if CONFIG["ENABLE_INTRADAY"] == 1:
+        intraday_bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="intraday")
+        intraday_future = intraday_bg.submit(_prefetch_intraday_bg, list(sp500_tickers))
+        intraday_ready = lambda: intraday_future.done() and intraday_future.exception() is None
+
+    def process_one(symbol):
+        with profile_step("whole ticker (run_screen)", symbol):
+            return evaluate_tickers([symbol], data, verbose_errors=False,
+                finbert_pipeline=None, extra_data_store=None,tv_exchange_map=None,
+                premarket_prices=premarket_prices, intraday_ready=intraday_ready, **kwargs)
+
+    try:
+        _run_pool(sp500_tickers, process_one, max_workers, verbose_errors, show_progress, results)
+
+        # Finish intraday analysis for tickers the workers reached before the
+        # background download was done.
+        if intraday_future is not None:
+            _finish_deferred_intraday(results, data, intraday_future, max_workers)
+    finally:
+        if intraday_bg is not None:
+            intraday_bg.shutdown(wait=True)
+            clear_prefetched_intraday()
+        with profile_step("main: save caches"):
+            disk_cache.flush_all()   # save earnings / cash-flow / info / analyst caches for the next run
+
+    # Fill in the pre-market columns now that the background fetch is done.
+    if premarket_future is not None:
+        try:
+            with profile_step("main: wait for pre-market"):   # ~0 if it finished during the pool
+                prices = premarket_future.result()
+        except Exception as e:
+            print(f"Pre-market fetch failed: {e}")
+            prices = {}
+        finally:
+            premarket_bg.shutdown(wait=False)
+        for row in results:
+            d1_close = row.pop(_D1_CLOSE_KEY, None)
+            cols, _ = _premarket_columns(prices.get(row.get(" Ticker ")), d1_close)
+            row.update(cols)   # existing keys -> column order is unchanged
+
+    return results
+
+
+def _prefetch_intraday_bg(tickers) -> None:
+    """Background-thread wrapper around prefetch_intraday (timed separately)."""
+    with profile_step("intraday prefetch (background)"):
+        prefetch_intraday(tickers)
+
+
+def _finish_deferred_intraday(results, data, intraday_future, max_workers) -> None:
+    """Run analyze_intraday for rows that were left with a placeholder, and put
+    the intraday columns where the placeholder was (column order unchanged)."""
+    with profile_step("main: wait for intraday prefetch"):   # ~0 if it finished during the pool
+        try:
+            intraday_future.result()
+            failed = None
+        except Exception as e:
+            print(f"Intraday prefetch failed: {e}")
+            failed = str(e)
+
+    pending = [row for row in results if _INTRADAY_KEY in row]
+    if not pending:
+        return
+    print(f"Intraday analysis: {len(results) - len(pending)} done during the pool, "
+          f"{len(pending)} after the download")
+
+    spy_df = fetch_intraday("SPY") if failed is None else None
+    sector_dfs = {}
+    if failed is None:
+        for etf in {SECTOR_TO_ETF.get(r[_INTRADAY_KEY]) for r in pending} - {None}:
+            sector_dfs[etf] = fetch_intraday(etf)
+
+    def analyse(row):
+        symbol = row.get(" Ticker ")
+        sector = row.get(_INTRADAY_KEY)
+        if failed is not None:
+            return {"symbol": symbol, "error": "intraday_prefetch_failed"}
+        with profile_step("intraday analysis", symbol):
+            try:
+                daily_df = data.xs(symbol, level=1, axis=1).dropna()
+                return analyze_intraday(symbol, sector=sector, spy_df=spy_df,
+                                        sector_df=sector_dfs.get(SECTOR_TO_ETF.get(sector)),
+                                        daily_df=daily_df)
+            except Exception as e:
+                return {"symbol": symbol, "error": f"intraday_failed: {e}"}
+
+    with profile_step("main: deferred intraday analysis"):
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            blocks = list(pool.map(analyse, pending))
+
+    for row, block in zip(pending, blocks):
+        # Rebuild the row so the intraday columns sit where the placeholder was.
+        items = list(row.items())
+        row.clear()
+        for key, value in items:
+            if key == _INTRADAY_KEY:
+                row.update(block)
+            else:
+                row[key] = value
+
+
+def _fetch_premarket(tickers) -> dict:
+    """Batched pre-market prices for all tickers; {} if disabled or failed."""
+    prices = prefetch_pre_market(list(tickers), CONFIG)
+    if prices is None:
+        return {}   # disabled in config: don't fall back to per-ticker calls
+    n = sum(1 for d in prices.values() if d and d.get("price") is not None)
+    print(f"Pre-market prices: {n}/{len(tickers)} tickers")
+    return prices
+
+
+def _run_pool(sp500_tickers, process_one, max_workers, verbose_errors, show_progress, results):
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_symbol = {
             executor.submit(process_one, symbol): symbol 

@@ -215,14 +215,23 @@ def calculate_support_resistance(df, fractal_window=CONFIG["SR_FRACTAL_WINDOW"],
     highs, lows, closes = recent['High'], recent['Low'], recent['Close']
     current_price = closes.iloc[-1]
 
-    swing_highs, swing_lows = [], []
     n = fractal_window
 
-    for i in range(n, len(recent) - n):
-        if highs.iloc[i] == highs.iloc[i - n:i + n + 1].max():
-            swing_highs.append(highs.iloc[i])
-        if lows.iloc[i] == lows.iloc[i - n:i + n + 1].min():
-            swing_lows.append(lows.iloc[i])
+    # A bar is a swing high/low if it is the max/min of the 2n+1 bars centred
+    # on it -- checked for all bars at once with numpy (same result as the
+    # former per-bar loop).
+    h = highs.to_numpy(dtype=float)
+    l = lows.to_numpy(dtype=float)
+    swing_highs, swing_lows = [], []
+    if len(h) >= 2 * n + 1:
+        from numpy.lib.stride_tricks import sliding_window_view
+        centre_h = h[n:len(h) - n]
+        centre_l = l[n:len(l) - n]
+        with np.errstate(invalid="ignore"):
+            win_max = np.nanmax(sliding_window_view(h, 2 * n + 1), axis=1)
+            win_min = np.nanmin(sliding_window_view(l, 2 * n + 1), axis=1)
+        swing_highs = [float(v) for v in centre_h[centre_h == win_max]]
+        swing_lows = [float(v) for v in centre_l[centre_l == win_min]]
 
     def cluster(levels, pct):
         if not levels:
