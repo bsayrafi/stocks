@@ -27,44 +27,54 @@ import pandas as pd
 import yfinance as yf
 import requests
 
-def get_apewisdom_sentiment(ticker: str) -> dict:
-    """Fetches Reddit mention volume, upvotes, and 24h momentum from ApeWisdom."""
-    url = "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1"
+_APEWISDOM_EMPTY = {
+    "mentions": 0,
+    "upvotes": 0,
+    "rank": "N/A",
+    "mentions_24h_ago": 0,
+    "rank_24h_ago": "N/A",
+    "momentum_pct": "N/A",
+}
+
+
+def fetch_apewisdom_table(pages: int = 1) -> dict[str, dict] | None:
+    """Download ApeWisdom's ranking ONCE (100 stocks per page) and return
+    {TICKER: sentiment dict}. Pass the result to get_event_catalysts(social_table=...)
+    so a watchlist run makes 1 request instead of 1 per ticker.
+    Returns None if the download fails."""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; catalyst-screener/1.0)"}
-    
+    table: dict[str, dict] = {}
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            for item in data.get("results", []):
-                if item.get("ticker", "").upper() == ticker.upper():
-                    mentions = int(item.get("mentions", 0))
-                    mentions_24h_ago = int(item.get("mentions_24h_ago", 0))
-                    
-                    if mentions_24h_ago > 0:
-                        momentum_pct = round(((mentions - mentions_24h_ago) / mentions_24h_ago) * 100, 1)
-                    else:
-                        momentum_pct = "N/A"
-                        
-                    return {
-                        "mentions": mentions,
-                        "upvotes": int(item.get("upvotes", 0)),
-                        "rank": int(item.get("rank", 999)),
-                        "mentions_24h_ago": mentions_24h_ago,
-                        "rank_24h_ago": int(item.get("rank_24h_ago", 999)),
-                        "momentum_pct": momentum_pct,
-                    }
+        for page in range(1, pages + 1):
+            url = f"https://apewisdom.io/api/v1.0/filter/all-stocks/page/{page}"
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                break
+            for item in resp.json().get("results", []):
+                mentions = int(item.get("mentions", 0))
+                mentions_24h_ago = int(item.get("mentions_24h_ago", 0) or 0)
+                momentum_pct = (round((mentions - mentions_24h_ago) / mentions_24h_ago * 100, 1)
+                                if mentions_24h_ago > 0 else "N/A")
+                table[str(item.get("ticker", "")).upper()] = {
+                    "mentions": mentions,
+                    "upvotes": int(item.get("upvotes", 0)),
+                    "rank": int(item.get("rank", 999)),
+                    "mentions_24h_ago": mentions_24h_ago,
+                    "rank_24h_ago": int(item.get("rank_24h_ago", 999) or 999),
+                    "momentum_pct": momentum_pct,
+                }
     except Exception:
-        pass
-        
-    return {
-        "mentions": 0,
-        "upvotes": 0,
-        "rank": "N/A",
-        "mentions_24h_ago": 0,
-        "rank_24h_ago": "N/A",
-        "momentum_pct": "N/A",
-    }
+        return table or None
+    return table
+
+
+def get_apewisdom_sentiment(ticker: str, table: dict[str, dict] | None = None) -> dict:
+    """Reddit mention volume, upvotes, and 24h momentum from ApeWisdom.
+    Looks the ticker up in a pre-fetched `table` (see fetch_apewisdom_table);
+    without one, downloads the ranking for this single call."""
+    if table is None:
+        table = fetch_apewisdom_table() or {}
+    return dict(table.get(ticker.upper(), _APEWISDOM_EMPTY))
 
 @dataclass
 class CatalystReport:
@@ -221,12 +231,77 @@ def _get_sp500_membership(verbose: bool = False) -> dict[str, dt.date] | None:
         return None
 
 
+def get_earnings_and_ratings(
+    ticker: str,
+    yf_ticker: "yf.Ticker | None" = None,
+    info: dict | None = None,
+    ratings_lookback_days: int = 30,
+) -> dict:
+    """The slow, once-a-day part of the catalyst report:
+      - next earnings date: taken from `info` (yfinance .info, usually already
+        fetched for fundamentals) when it has earnings timestamps; only if it
+        has none at all does it fall back to scraping get_earnings_dates()
+        (one of yfinance's slowest calls).
+      - analyst upgrade/downgrade actions within ratings_lookback_days.
+    Returns plain, picklable data so the caller can cache it for the day:
+      {"next_earnings_date": date | None, "earnings_source": str,
+       "rating_rows": [(date, firm, action, to_grade), ...]}
+    """
+    today = dt.date.today()
+    t = yf_ticker if yf_ticker is not None else yf.Ticker(ticker)
+    out = {"next_earnings_date": None, "earnings_source": "none", "rating_rows": []}
+
+    # --- Earnings date: .info first ------------------------------------------
+    stamps = [info.get(k) for k in ("earningsTimestampStart", "earningsTimestamp", "earningsTimestampEnd")] \
+        if info else []
+    stamps = [s for s in stamps if isinstance(s, (int, float)) and s > 0]
+    if stamps:
+        dates = sorted({dt.datetime.fromtimestamp(s, dt.timezone.utc).date() for s in stamps})
+        future = [d for d in dates if d >= today]
+        if future:
+            out["next_earnings_date"], out["earnings_source"] = future[0], "info"
+        else:
+            out["earnings_source"] = "info (no upcoming date)"
+    else:
+        # --- Fallback: scrape the earnings calendar ---------------------------
+        try:
+            cal = t.get_earnings_dates(limit=8)
+            if cal is not None and not cal.empty:
+                cal_dates = [d.date() for d in cal.index if hasattr(d, "date")]
+                future = [d for d in cal_dates if d >= today]
+                if future:
+                    out["next_earnings_date"], out["earnings_source"] = min(future), "earnings calendar"
+        except Exception:
+            pass
+
+    # --- Analyst upgrade/downgrade actions -----------------------------------
+    try:
+        actions = t.upgrades_downgrades
+        if actions is not None and not actions.empty:
+            actions = actions.reset_index()
+            date_col = "GradeDate" if "GradeDate" in actions.columns else actions.columns[0]
+            actions[date_col] = pd.to_datetime(actions[date_col]).dt.date
+            recent = actions[actions[date_col] >= today - dt.timedelta(days=ratings_lookback_days)]
+            for _, row in recent.iterrows():
+                out["rating_rows"].append((row[date_col], str(row.get("Firm", "")),
+                                           str(row.get("Action", "")), str(row.get("ToGrade", ""))))
+    except Exception:
+        pass
+    return out
+
+
 def get_event_catalysts(
     ticker: str,
     news_lookback_days: int = 14,
     ratings_lookback_days: int = 30,
     sp500_members: dict[str, dt.date] | None = None,
     verbose: bool = False,
+    *,
+    yf_ticker: "yf.Ticker | None" = None,
+    info: dict | None = None,
+    headlines: list | None = None,
+    social_table: dict[str, dict] | None = None,
+    earnings_ratings: dict | None = None,
 ) -> CatalystReport:
     """
     Build a catalyst report for `ticker`.
@@ -246,24 +321,29 @@ def get_event_catalysts(
     verbose : bool
         If True, print the reason for any failed lookup instead of
         silently swallowing it.
+
+    Optional pre-fetched inputs (all keyword-only; each one skips a web request):
+    yf_ticker : a yf.Ticker to reuse instead of creating a new one
+    info : yfinance .info dict, used for the next earnings date
+    headlines : [(date, title), ...] to scan for buyback/guidance keywords
+        instead of calling Yahoo's news (e.g. Finnhub headlines)
+    social_table : output of fetch_apewisdom_table()
+    earnings_ratings : output of get_earnings_and_ratings() (e.g. from a cache)
     """
     today = dt.date.today()
-    t = yf.Ticker(ticker)
+    t = yf_ticker if yf_ticker is not None else yf.Ticker(ticker)
     report = CatalystReport(ticker=ticker.upper(), as_of=today)
 
+    if earnings_ratings is None:
+        earnings_ratings = get_earnings_and_ratings(ticker, yf_ticker=t, info=info,
+                                                    ratings_lookback_days=ratings_lookback_days)
+
     # --- Earnings date proximity ---------------------------------------
-    try:
-        cal = t.get_earnings_dates(limit=8)
-        if cal is not None and not cal.empty:
-            cal_dates = [d.date() for d in cal.index if hasattr(d, "date")]
-            future = [d for d in cal_dates if d >= today]
-            if future:
-                next_date = min(future)
-                report.next_earnings_date = next_date
-                report.days_to_earnings = (next_date - today).days
-                report.in_earnings_window = abs(report.days_to_earnings) <= 5
-    except Exception:
-        pass
+    next_date = earnings_ratings.get("next_earnings_date")
+    if next_date:
+        report.next_earnings_date = next_date
+        report.days_to_earnings = (next_date - today).days
+        report.in_earnings_window = abs(report.days_to_earnings) <= 5
 
     # --- Index membership ------------------------------------------------
     members = (
@@ -285,54 +365,45 @@ def get_event_catalysts(
     buyback_kw = ("buyback", "share repurchase", "repurchase program")
     guidance_kw = ("guidance", "outlook cut", "outlook raised", "forecast")
     cutoff = today - dt.timedelta(days=news_lookback_days)
-    try:
-        news = t.get_news(count=25) or []
-        for item in news:
-            content = item.get("content", item)  # yfinance schema has shifted over versions
-            title = (content.get("title") or "").strip()
-            pub = content.get("pubDate") or content.get("providerPublishTime")
-            pub_date = None
-            if isinstance(pub, (int, float)):
-                pub_date = dt.datetime.fromtimestamp(pub).date()
-            elif isinstance(pub, str):
-                try:
-                    pub_date = dt.datetime.fromisoformat(pub.replace("Z", "+00:00")).date()
-                except ValueError:
-                    pub_date = None
-            if pub_date and pub_date < cutoff:
-                continue
-            lower = title.lower()
-            if any(k in lower for k in buyback_kw):
-                report.buyback_headlines.append(title)
-            if any(k in lower for k in guidance_kw):
-                report.guidance_headlines.append(title)
-    except Exception:
-        pass
+    if headlines is None:  # no pre-fetched headlines -> Yahoo news
+        headlines = []
+        try:
+            for item in t.get_news(count=25) or []:
+                content = item.get("content", item)  # yfinance schema has shifted over versions
+                title = (content.get("title") or "").strip()
+                pub = content.get("pubDate") or content.get("providerPublishTime")
+                pub_date = None
+                if isinstance(pub, (int, float)):
+                    pub_date = dt.datetime.fromtimestamp(pub).date()
+                elif isinstance(pub, str):
+                    try:
+                        pub_date = dt.datetime.fromisoformat(pub.replace("Z", "+00:00")).date()
+                    except ValueError:
+                        pub_date = None
+                headlines.append((pub_date, title))
+        except Exception:
+            pass
+
+    for pub_date, title in headlines:
+        if pub_date and pub_date < cutoff:
+            continue
+        lower = (title or "").lower()
+        if any(k in lower for k in buyback_kw):
+            report.buyback_headlines.append(title)
+        if any(k in lower for k in guidance_kw):
+            report.guidance_headlines.append(title)
 
     # --- Analyst upgrade/downgrade clustering ------------------------------
-    try:
-        actions = t.upgrades_downgrades
-        if actions is not None and not actions.empty:
-            actions = actions.reset_index()
-            date_col = "GradeDate" if "GradeDate" in actions.columns else actions.columns[0]
-            actions[date_col] = pd.to_datetime(actions[date_col]).dt.date
-            recent = actions[
-                actions[date_col] >= today - dt.timedelta(days=ratings_lookback_days)
-            ]
-            for _, row in recent.iterrows():
-                action = str(row.get("Action", "")).lower()
-                firm = row.get("Firm", "")
-                grade = row.get("ToGrade", "")
-                if "up" in action:
-                    report.upgrades += 1
-                elif "down" in action:
-                    report.downgrades += 1
-                report.rating_actions.append(f"{row[date_col]} {firm}: {row.get('Action','')} -> {grade}")
-    except Exception:
-        pass
+    for grade_date, firm, action_raw, grade in earnings_ratings.get("rating_rows", []):
+        action = action_raw.lower()
+        if "up" in action:
+            report.upgrades += 1
+        elif "down" in action:
+            report.downgrades += 1
+        report.rating_actions.append(f"{grade_date} {firm}: {action_raw} -> {grade}")
 
-# --- Social Sentiment (ApeWisdom) ----------------------------------
-    social = get_apewisdom_sentiment(ticker)
+    # --- Social Sentiment (ApeWisdom) ----------------------------------
+    social = get_apewisdom_sentiment(ticker, table=social_table)
     report.social_mentions = social.get("mentions", 0)
     report.social_upvotes = social.get("upvotes", 0)
     report.social_rank = social.get("rank", "N/A")
@@ -383,10 +454,11 @@ def catalyst_snapshots(
 ) -> list[dict]:
     """
     Same as catalyst_snapshot but for a whole watchlist in one call.
-    Fetches the S&P 500 membership list once and reuses it across all
-    tickers instead of re-fetching per symbol.
+    Fetches the S&P 500 membership list and the ApeWisdom ranking once and
+    reuses them across all tickers instead of re-fetching per symbol.
     """
     members = _get_sp500_membership(verbose=verbose)
+    social_table = fetch_apewisdom_table()
     results = []
     for tk in tickers:
         report = get_event_catalysts(
@@ -395,6 +467,7 @@ def catalyst_snapshots(
             ratings_lookback_days=ratings_lookback_days,
             sp500_members=members,
             verbose=verbose,
+            social_table=social_table,
         )
         results.append(report.to_dict())
     return results

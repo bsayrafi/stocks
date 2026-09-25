@@ -48,6 +48,163 @@ _SECRETS = getattr(constants, "CONFIG", {}) or {}
 from datetime import datetime, timedelta, timezone
 from event_catalysts import *
 from event_catalysts import _get_sp500_membership
+from event_catalysts import fetch_apewisdom_table, get_earnings_and_ratings
+import time
+import functools
+import pickle
+import threading
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+
+
+# ---------------------------------------------------------------- profiling
+# Records how long each network call / step takes per ticker, and main()
+# prints a summary at the end. Turn off with CONFIGH["PROFILE"] = False.
+PROFILE: dict = {}   # step name -> list of (ticker, seconds)
+
+
+def _prof_add(step: str, ticker: str, seconds: float) -> None:
+    PROFILE.setdefault(step, []).append((ticker, seconds))
+
+
+def _profiled(step: str):
+    """Decorator: time every call of the function under `step`. The ticker is
+    taken from the first argument (a ticker string, or a report dict)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            t0 = time.perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                first = args[0] if args else kwargs.get("ticker", "")
+                ticker = (first.get("ticker", "") if isinstance(first, dict)
+                          else "ALL" if isinstance(first, (list, tuple)) else str(first))
+                _prof_add(step, ticker, time.perf_counter() - t0)
+        return wrapper
+    return deco
+
+
+# functions imported from event_catalysts are wrapped here so they're timed too
+get_event_catalysts = _profiled("event catalysts (event_catalysts.py)")(get_event_catalysts)
+_get_sp500_membership = _profiled("S&P 500 list (once per run)")(_get_sp500_membership)
+fetch_apewisdom_table = _profiled("ApeWisdom ranking (once per run)")(fetch_apewisdom_table)
+get_earnings_and_ratings = _profiled("earnings date + upgrades (yf)")(get_earnings_and_ratings)
+
+
+# ---------------------------------------------------------------- daily disk cache
+# Data that changes at most once a day (yfinance .info, analyst data, earnings
+# date + rating actions, S&P 500 list) is saved to CACHE_DIR, one file per
+# ticker per day. A second run the same day reads it from disk instead of the
+# network. Files from earlier days are deleted automatically.
+_cache_lock = threading.Lock()
+
+
+def _cache_path(name: str, key: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)
+    return os.path.join(CONFIGH.get("CACHE_DIR", "cache"), f"{dt.date.today():%Y%m%d}_{name}_{safe}.pkl")
+
+
+def daily_cached(name: str, key: str, fn, is_valid=bool):
+    """Return today's cached value for (name, key), or call fn(), cache the
+    result if is_valid(result), and return it. Failures are never cached."""
+    if not CONFIGH.get("CACHE_ENABLED", True):
+        return fn()
+    path = _cache_path(name, key)
+    try:
+        with open(path, "rb") as f:
+            value = pickle.load(f)
+        _prof_add("  cache hits (read from disk)", key, 0.0)
+        return value
+    except (OSError, pickle.PickleError, EOFError):
+        pass
+    value = fn()
+    if is_valid(value):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = f"{path}.{threading.get_ident()}.tmp"
+            with open(tmp, "wb") as f:
+                pickle.dump(value, f)
+            os.replace(tmp, path)   # atomic, so parallel workers never read half a file
+        except OSError:
+            pass
+    return value
+
+
+def prune_cache() -> None:
+    """Delete cache files from previous days."""
+    d = CONFIGH.get("CACHE_DIR", "cache")
+    today = f"{dt.date.today():%Y%m%d}_"
+    try:
+        for fn in os.listdir(d):
+            if fn.endswith(".pkl") and not fn.startswith(today):
+                try:
+                    os.remove(os.path.join(d, fn))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------- Finnhub rate limit
+class _RateLimiter:
+    """Thread-safe: allow at most `per_minute` calls in any 60-second window."""
+    def __init__(self, per_minute: int):
+        self.per_minute = max(1, int(per_minute))
+        self.calls = deque()
+        self.lock = threading.Lock()
+
+    def wait(self) -> None:
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                while self.calls and now - self.calls[0] >= 60:
+                    self.calls.popleft()
+                if len(self.calls) < self.per_minute:
+                    self.calls.append(now)
+                    return
+                sleep_for = 60 - (now - self.calls[0]) + 0.05
+            time.sleep(sleep_for)
+
+
+_finnhub_limiter = None  # created on first use from CONFIGH["FINNHUB_MAX_PER_MIN"]
+_finnhub_limiter_lock = threading.Lock()
+
+
+def _finnhub_wait() -> None:
+    global _finnhub_limiter
+    with _finnhub_limiter_lock:
+        if _finnhub_limiter is None:
+            _finnhub_limiter = _RateLimiter(CONFIGH.get("FINNHUB_MAX_PER_MIN", 55))
+    _finnhub_limiter.wait()
+
+
+def print_profile_summary(wall_seconds: float, n_tickers: int) -> None:
+    """Print where the time went, biggest step first."""
+    if not PROFILE:
+        return
+    rows = []
+    for step, calls in PROFILE.items():
+        total = sum(sec for _, sec in calls)
+        slow_t, slow_s = max(calls, key=lambda c: c[1])
+        rows.append((step, total, len(calls), total / len(calls), slow_t, slow_s))
+    rows.sort(key=lambda r: -r[1])
+    work = sum(r[1] for r in rows if not r[0].startswith("  ") and r[0] != "whole ticker (run_screen)")
+
+    print(f"\n=== Timing summary: {n_tickers} tickers, {wall_seconds:.1f}s wall time "
+          f"({wall_seconds / max(n_tickers, 1):.1f}s per ticker) ===")
+    print(f"total work {work:.1f}s across {CONFIGH.get('MAX_WORKERS', 1)} parallel workers "
+          f"(steps overlap, so work > wall time)")
+    print(f"{'step':<40}{'total s':>9}{'% work':>8}{'calls':>7}{'avg s':>8}   slowest")
+    for step, total, n, avg, slow_t, slow_s in rows:
+        if step == "whole ticker (run_screen)":
+            continue
+        print(f"{step:<40}{total:>9.1f}{total / max(work, 1e-9) * 100:>7.1f}%{n:>7}{avg:>8.2f}"
+              f"   {slow_t} {slow_s:.1f}s")
+    per_ticker = sorted(PROFILE.get("whole ticker (run_screen)", []), key=lambda c: -c[1])[:5]
+    if per_ticker:
+        print("slowest tickers: " + ", ".join(f"{t} {sec:.1f}s" for t, sec in per_ticker))
+    print("(sub-steps marked '  analyst:' are included in 'analyst data')\n")
 
 
 CONFIGH = {
@@ -95,6 +252,12 @@ CONFIGH = {
     "SCORE_THRESHOLD": 3,          # out of 5 soft conditions
 
     # HTML report price chart (display only, not part of the signal)
+    "PROFILE": True,               # print a timing breakdown at the end of main()
+    "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
+    "CACHE_ENABLED": True,         # cache once-a-day data (.info, analyst, earnings...) on disk
+    "CACHE_DIR": "cache",
+    "FINNHUB_MAX_PER_MIN": 55,     # Finnhub free tier allows 60 calls/minute
+    "CATALYST_NEWS_DAYS": 14,      # headlines scanned for buyback/guidance keywords
     "CHART_OPEN": False,           # chart collapsed by default (each card has a show/hide link)
     "CHART_DAYS": 7,               # number of recent trading days of 1h candles to plot
     "CHART_MAS": [("ema", 9), ("ema", 50)],  # MA overlays drawn on the chart
@@ -132,6 +295,7 @@ CONFIGH = {
 
 # ---------------------------------------------------------------- data
 # 2. Update fetch_hourly_data to flatten MultiIndex columns from yfinance
+@_profiled("yfinance 1h download")
 def fetch_hourly_data(ticker: str, period: str, interval: str) -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
     if df.empty:
@@ -143,6 +307,30 @@ def fetch_hourly_data(ticker: str, period: str, interval: str) -> pd.DataFrame:
 
     df.index = pd.to_datetime(df.index)
     return df
+
+
+@_profiled("yfinance 1h batch download (all tickers)")
+def prefetch_hourly_data(tickers: list, period: str, interval: str) -> dict:
+    """Download 1h bars for ALL tickers in one yf.download call (yfinance
+    fetches them concurrently). Returns {ticker: DataFrame}; tickers with no
+    data are left out, so run_screen falls back to a single download / error.
+    Done up front because yf.download is not safe to call from several threads."""
+    if not tickers:
+        return {}
+    data = yf.download(list(tickers), period=period, interval=interval, auto_adjust=True,
+                       progress=False, group_by="ticker", threads=True)
+    out = {}
+    for t in tickers:
+        try:
+            df = data[t] if isinstance(data.columns, pd.MultiIndex) else data
+        except KeyError:
+            continue
+        df = df.dropna(how="all")
+        if not df.empty:
+            df = df.copy()
+            df.index = pd.to_datetime(df.index)
+            out[t] = df
+    return out
 
 
 def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
@@ -422,6 +610,7 @@ def _alpaca_premarket_bars(ticker: str, headers: dict | None, feed: str, delay_m
             for b in raw]
 
 
+@_profiled("pre-market (Alpaca, 1 feed)")
 def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "sip",
                          delay_minutes: int = 16, tz: str = "America/New_York",
                          start_hhmm: str = "04:00", open_hhmm: str = "09:30",
@@ -442,6 +631,7 @@ def get_pre_market_price(ticker: str, headers: dict | None = None, feed: str = "
     return (price, bars[-1]["t"].strftime("%H:%M")) if with_time else price
 
 
+@_profiled("pre-market (Alpaca auto: 2 calls)")
 def get_best_pre_market_price(ticker: str, headers: dict | None = None, sip_delay_minutes: int = 16,
                               move_pct: float = 0.3, max_iex_gap_pct: float = 0.5,
                               tz: str = "America/New_York", start_hhmm: str = "04:00",
@@ -504,22 +694,26 @@ def get_best_pre_market_price(ticker: str, headers: dict | None = None, sip_dela
     return d if with_details else d["price"]
 
 
+@_profiled("news (Finnhub)")
 def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
-                       max_items: int = 25, tz: str = "America/New_York") -> list:
+                       max_items: int | None = 25, tz: str = "America/New_York") -> list | None:
     """Company news from Finnhub for today (and the previous `days` days).
-    Returns a list of {"time": "YYYY-MM-DD HH:MM", "headline": str, "url": str},
-    newest first, duplicates (same headline) removed. Returns [] if the
-    finnhub package or API key is missing, or on any API/network error."""
+    Returns a list of {"time": "YYYY-MM-DD HH:MM", "date": date, "headline": str,
+    "url": str}, newest first, duplicates (same headline) removed, at most
+    max_items (None = no limit). Returns [] if there's no news, and None if the
+    finnhub package or API key is missing or the request fails.
+    Calls are rate-limited to CONFIGH["FINNHUB_MAX_PER_MIN"] across threads."""
     api_key = api_key or _SECRETS.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_API_KEY")
     if finnhub is None or not api_key:
-        return []
+        return None
     today = dt.date.today()
     try:
+        _finnhub_wait()
         client = finnhub.Client(api_key=api_key)
         news = client.company_news(ticker, _from=str(today - dt.timedelta(days=days)), to=str(today)) or []
     except Exception as e:
         print(f"  [{ticker}] news unavailable: {e}")
-        return []
+        return None
 
     items, seen = [], set()
     for n in sorted(news, key=lambda n: n.get("datetime", 0), reverse=True):
@@ -528,8 +722,9 @@ def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
             continue
         seen.add(headline)
         when = pd.Timestamp(n.get("datetime", 0), unit="s", tz="UTC").tz_convert(tz)
-        items.append({"time": when.strftime("%Y-%m-%d %H:%M"), "headline": headline, "url": url})
-        if len(items) >= max_items:
+        items.append({"time": when.strftime("%Y-%m-%d %H:%M"), "date": when.date(),
+                      "headline": headline, "url": url})
+        if max_items and len(items) >= max_items:
             break
     return items
 
@@ -631,14 +826,25 @@ FUNDAMENTAL_FIELDS = [
 ]
 
 
-def fetch_fundamentals(ticker: str) -> dict:
+@_profiled("yf .info (shared, once per ticker)")
+def fetch_info(ticker: str, tkr: "yf.Ticker | None" = None) -> dict:
+    """yfinance .info for a ticker ({} on failure). Fetched ONCE per ticker and
+    shared by fundamentals, analyst data and the earnings date."""
+    try:
+        return (tkr if tkr is not None else yf.Ticker(ticker)).info or {}
+    except Exception:
+        return {}
+
+
+def fetch_fundamentals(ticker: str, info: dict | None = None) -> dict:
     """Pull a handful of fundamental data points for a ticker. Returns a dict of
     label -> formatted string. Any field yfinance doesn't have is shown as "N/A";
-    if the whole fetch fails (network hiccup, delisted ticker, etc.) an empty
-    dict is returned so the technical screen can still run."""
-    try:
-        info = yf.Ticker(ticker).info or {}
-    except Exception:
+    if there's no .info at all (network hiccup, delisted ticker, etc.) an empty
+    dict is returned so the technical screen can still run.
+    Pass `info` (from fetch_info) to avoid downloading it again."""
+    if info is None:
+        info = fetch_info(ticker)
+    if not info:
         return {}
 
     fundamentals = {}
@@ -663,7 +869,10 @@ def fetch_fundamentals(ticker: str) -> dict:
 # Analyst coverage varies a lot by ticker (some have none), so every piece is
 # fetched independently and defensively - a missing piece never blocks the rest.
 
-def fetch_analyst_data(ticker: str) -> dict:
+@_profiled("analyst data (yf, 3 calls)")
+def fetch_analyst_data(ticker: str, tkr: "yf.Ticker | None" = None, info: dict | None = None) -> dict:
+    """Analyst consensus + EPS revisions. Pass the shared `tkr` and `info` to
+    avoid creating another yf.Ticker and downloading .info a second time."""
     data = {
         "recommendation_key": "N/A",
         "recommendation_mean": "N/A",
@@ -675,14 +884,16 @@ def fetch_analyst_data(ticker: str) -> dict:
         "eps_num_analysts": "N/A",
     }
 
-    try:
-        tkr = yf.Ticker(ticker)
-    except Exception:
-        return data
+    if tkr is None:
+        try:
+            tkr = yf.Ticker(ticker)
+        except Exception:
+            return data
 
     # --- Consensus key ("buy", "hold", ...), mean score, and analyst count
     try:
-        info = tkr.info or {}
+        if info is None:
+            info = fetch_info(ticker, tkr)
         if info.get("recommendationKey") is not None:
             data["recommendation_key"] = str(info["recommendationKey"]).replace("_", " ").title()
         if info.get("recommendationMean") is not None:
@@ -692,7 +903,9 @@ def fetch_analyst_data(ticker: str) -> dict:
     except Exception:
         pass
 
+
     # --- Buy/hold/sell breakdown, most recent period ("0m" = current month)
+    t0 = time.perf_counter()
     try:
         rec = tkr.recommendations
         if rec is not None and not rec.empty:
@@ -707,7 +920,10 @@ def fetch_analyst_data(ticker: str) -> dict:
     except Exception:
         pass
 
+    _prof_add("  analyst: recommendations", ticker, time.perf_counter() - t0)
+
     # --- EPS estimate revision trend, current quarter ("0q")
+    t0 = time.perf_counter()
     try:
         trend = tkr.eps_trend
         if trend is not None and not trend.empty and "0q" in trend.index:
@@ -723,7 +939,10 @@ def fetch_analyst_data(ticker: str) -> dict:
     except Exception:
         pass
 
+    _prof_add("  analyst: eps_trend", ticker, time.perf_counter() - t0)
+
     # --- Number of analysts contributing to the current-quarter EPS estimate
+    t0 = time.perf_counter()
     try:
         est = tkr.earnings_estimate
         if est is not None and not est.empty and "0q" in est.index:
@@ -732,6 +951,7 @@ def fetch_analyst_data(ticker: str) -> dict:
                 data["eps_num_analysts"] = str(int(n))
     except Exception:
         pass
+    _prof_add("  analyst: earnings_estimate", ticker, time.perf_counter() - t0)
 
     return data
 
@@ -791,13 +1011,15 @@ def generate_signal(daily: dict, h4: dict, h1: dict, h1_macd_ok: bool, vol_ok: b
 
 # ---------------------------------------------------------------- main
 
-def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dict:
+def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
+               hourly: pd.DataFrame | None = None, social_table: dict | None = None) -> dict:
     """Fetch data and compute everything needed for one ticker's report.
     Pure computation - no printing - so the same result can feed both the
     console output and the HTML report."""
     cfg = dict(cfg)
     cfg["TICKER"] = ticker
-    hourly = fetch_hourly_data(cfg["TICKER"], cfg["PERIOD"], cfg["INTERVAL"])
+    if hourly is None or hourly.empty:   # not prefetched -> download just this one
+        hourly = fetch_hourly_data(cfg["TICKER"], cfg["PERIOD"], cfg["INTERVAL"])
 
     tf_data = {
         "1h": hourly,
@@ -895,13 +1117,34 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None) -> dic
     lrc = lrc_fit if cfg.get("LRC_ENABLED", True) else None
     chart["lrc"] = lrc
 
-    fundamentals = fetch_fundamentals(cfg["TICKER"])
-    analyst = fetch_analyst_data(cfg["TICKER"])
-    #catalysts = catalyst_snapshot(cfg["TICKER"], sp500_members=sp500_members)
-    catalysts = get_event_catalysts(cfg["TICKER"], sp500_members=sp500_members).to_dict()
-    news = fetch_company_news(cfg["TICKER"], api_key=cfg.get("FINNHUB_API_KEY"),
-                              days=cfg.get("NEWS_DAYS", 0), max_items=cfg.get("NEWS_MAX", 25),
-                              tz=cfg.get("NEWS_TZ", "America/New_York"))
+    # ---- fundamentals / analyst / catalysts: one shared yf.Ticker and one .info,
+    # with the once-a-day parts cached on disk (see daily_cached)
+    tk = cfg["TICKER"]
+    tkr = yf.Ticker(tk)
+    info = daily_cached("info", tk, lambda: fetch_info(tk, tkr))
+    fundamentals = fetch_fundamentals(tk, info=info)
+    analyst = daily_cached(
+        "analyst", tk, lambda: fetch_analyst_data(tk, tkr=tkr, info=info),
+        is_valid=lambda a: bool(info) and (a.get("recommendation_key") != "N/A" or a.get("eps_current") != "N/A"))
+    earnings_ratings = daily_cached(
+        "earnings_ratings", tk, lambda: get_earnings_and_ratings(tk, yf_ticker=tkr, info=info),
+        is_valid=lambda er: bool(info))
+
+    # One Finnhub call covers both the News row (last NEWS_DAYS) and the
+    # buyback/guidance keyword scan (last CATALYST_NEWS_DAYS) - no Yahoo news call.
+    news_days = cfg.get("NEWS_DAYS", 0)
+    catalyst_days = cfg.get("CATALYST_NEWS_DAYS", 14)
+    news_all = fetch_company_news(tk, api_key=cfg.get("FINNHUB_API_KEY"),
+                                  days=max(news_days, catalyst_days), max_items=None,
+                                  tz=cfg.get("NEWS_TZ", "America/New_York"))
+    headlines = None if news_all is None else [(n["date"], n["headline"]) for n in news_all]
+
+    catalysts = get_event_catalysts(tk, news_lookback_days=catalyst_days, sp500_members=sp500_members,
+                                    yf_ticker=tkr, info=info, headlines=headlines,
+                                    social_table=social_table, earnings_ratings=earnings_ratings).to_dict()
+
+    news_cutoff = dt.date.today() - dt.timedelta(days=news_days)
+    news = [n for n in (news_all or []) if n["date"] >= news_cutoff][:cfg.get("NEWS_MAX", 25)]
 
     return {
         "ticker": cfg["TICKER"],
@@ -1327,6 +1570,7 @@ def render_price_chart_svg(report: dict) -> str:
       </details>"""
 
 
+@_profiled("HTML rendering (incl. chart)")
 def render_ticker_html(report: dict) -> str:
     cfg = report["cfg"]
     results = report["results"]
@@ -1489,8 +1733,12 @@ def render_ticker_html(report: dict) -> str:
 
         buyback_headlines = catalysts.get("buyback_headlines") or []
         guidance_headlines = catalysts.get("guidance_headlines") or []
-        buyback_html = "<br>".join(html.escape(h) for h in buyback_headlines) or "none"
-        guidance_html = "<br>".join(html.escape(h) for h in guidance_headlines) or "none"
+        def _head_list(heads, limit=5):
+            shown = "<br>".join(html.escape(h) for h in heads[:limit])
+            more = f'<br><span class="muted-small">... and {len(heads) - limit} more</span>' if len(heads) > limit else ""
+            return (shown + more) or "none"
+        buyback_html = _head_list(buyback_headlines)
+        guidance_html = _head_list(guidance_headlines)
 
         rating_actions = catalysts.get("rating_actions") or []
         rating_html = "<br>".join(html.escape(a) for a in rating_actions) or "none"
@@ -1800,23 +2048,51 @@ def main(tickers, fileapp):
     report_filter_checks(). Call as main(TICKERS, "name")."""
     sections = {"up": [], "down": []}
     skipped = []  # (ticker, reason) - listed at the bottom of both reports
-    sp500_members = _get_sp500_membership(verbose=False)
+    PROFILE.clear()
+    run_t0 = time.perf_counter()
+    prune_cache()
+    sp500_members = daily_cached("sp500", "all", lambda: _get_sp500_membership(verbose=False))
+    social_table = fetch_apewisdom_table()   # once per run (mentions change intraday, so not cached)
 
-    for ticker in tickers:
+    try:
+        prefetched = prefetch_hourly_data(tickers, CONFIGH["PERIOD"], CONFIGH["INTERVAL"])
+    except Exception as e:
+        print(f"batch download failed ({type(e).__name__}: {e}) - falling back to one download per ticker")
+        prefetched = {}
+
+    def screen_one(ticker):
+        """Runs in a worker thread. Returns ("ok", direction, html) or ("skip", reason)."""
         try:
-            report = run_screen(ticker, CONFIGH, sp500_members=sp500_members)
+            t0 = time.perf_counter()
+            report = run_screen(ticker, CONFIGH, sp500_members=sp500_members,
+                                hourly=prefetched.get(ticker), social_table=social_table)
+            elapsed = time.perf_counter() - t0
+            _prof_add("whole ticker (run_screen)", ticker, elapsed)
+            fetched = sum(sec for step, calls in list(PROFILE.items())
+                          if not step.startswith("  ") and step != "whole ticker (run_screen)"
+                          for t, sec in list(calls) if t == ticker)
+            _prof_add("indicators & signal (CPU, no network)", ticker, max(elapsed - fetched, 0.0))
             #print_report(report)
             fails = report_filter_checks(report)
             if all(fails.values()):
                 print(f"=== {ticker}: filtered out (fails all 4 checks) ===")
-                skipped.append((ticker, "filtered out - fails all 4 checks (hard <3/4, no pattern, "
-                                        "soft <2, EPS deteriorating)"))
-                continue
-            sections[report["trend_dir"]].append(render_ticker_html(report))
+                return ("skip", "filtered out - fails all 4 checks (hard <3/4, no pattern, "
+                                "soft <2, EPS deteriorating)")
+            return ("ok", report["trend_dir"], render_ticker_html(report))
         except Exception as e:
             print(f"\n=== {ticker}: skipped due to error ===")
             print(f"  {type(e).__name__}: {e}")
-            skipped.append((ticker, f"error - {type(e).__name__}: {e}"))
+            return ("skip", f"error - {type(e).__name__}: {e}")
+
+    # executor.map keeps results in the same order as `tickers`
+    with ThreadPoolExecutor(max_workers=max(1, int(CONFIGH.get("MAX_WORKERS", 4)))) as ex:
+        results = list(ex.map(screen_one, tickers))
+
+    for ticker, res in zip(tickers, results):
+        if res[0] == "ok":
+            sections[res[1]].append(res[2])
+        else:
+            skipped.append((ticker, res[1]))
 
     tz_gmt3 = timezone(timedelta(hours=3))
     #timestamp = datetime.now(tz_gmt3).strftime("%Y%m%d_%H%M")
@@ -1830,3 +2106,6 @@ def main(tickers, fileapp):
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
         print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
+
+    if CONFIGH.get("PROFILE", True):
+        print_profile_summary(time.perf_counter() - run_t0, len(tickers))

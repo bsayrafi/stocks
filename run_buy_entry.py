@@ -41,7 +41,7 @@ large_enrichment_tickers = [
     "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR",
     "DOCN", "DT", "ECL", "EMR", "ESTC", "EXLS", "ENTG", "FCX", "FIVE", "FIVN", "FLS",
     "FLYW", "FORM", "FRSH", "FTI", "GOOG", "GEV", "GLW", "GTES", "HALO", "HQY", "INGM", "IREN",
-    "IOT", "INTC", "KEYS", "KLAC", "KO", "LECO", "LITE", "KLH", "LLY", "LRCX", "MANH", "MDB", "META",
+    "IOT", "INTC", "KEYS", "KLAC", "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META",
     "MNST", "MRK", "MRVL", "MSFT", "MTSI", "MU", "NEM", "NESR", "NOW", "NTAP", "NBIS",
     "NVDA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS",
     "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "ROK", "RKLB", "SCHW", "SHC", "SOFI", "SKHY", "SMTC", 
