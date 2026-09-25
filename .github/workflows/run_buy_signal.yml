@@ -1,12 +1,18 @@
 name: Run Buy Signal
 
 # This allows you to run it manually with a button click
-on: 
-  workflow_dispatch: 
+on:
+  workflow_dispatch:
+
+# Never run two screeners at once (they would race on the cache)
+concurrency:
+  group: run-buy-signal
+  cancel-in-progress: false
 
 jobs:
   run-screener:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       # Step 1: Download your repository files (including your custom .py files)
@@ -23,24 +29,51 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas openpyxl yfinance pyarrow tradingview-ta finvizfinance fundamentalanalysis finnhub-python
+          pip install pandas openpyxl yfinance pyarrow tradingview-ta finvizfinance fundamentalanalysis finnhub-python requests numpy lxml
+
+      # Step 3.5: Today's UTC date - the script's daily cache is keyed on it too
+      - name: Get cache date
+        id: cachedate
+        run: echo "today=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+      # Step 3.6: Restore today's newest cache (nothing on the first run of the day,
+      # so that run fetches everything fresh)
+      - name: Restore daily cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: screener-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
+          restore-keys: |
+            screener-cache-${{ steps.cachedate.outputs.today }}-
 
       # Step 4: Run your cleaned Python script
       - name: Run Screener Script
         env:
           # Injects the secret we created earlier!
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # API keys - used when constants.CONFIG doesn't provide them
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         # IMPORTANT: Make sure this matches the exact name of your main script file
-        
         run: |
           mkdir -p reports
           mkdir -p data
+          mkdir -p cache
           python run_buy_entry.py
+
+      # Step 4.2: Save this run's cache for later runs today (also if the script failed partway)
+      - name: Save daily cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: screener-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
 
       # Step 4.5: Generate the date (Day-Month)
       - name: Get current date
         run: echo "DATE=$(date +'%m_%d_%H')" >> $GITHUB_ENV
-        
+
       # Step 5: Save the generated Excel files as Artifacts
       - name: Upload Excel Output
         uses: actions/upload-artifact@v4
