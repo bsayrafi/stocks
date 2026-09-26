@@ -59,6 +59,15 @@ DAY_LABELS = {idx: -idx for idx in DAY_IDXS}  # DAYm1_IDX(-1) -> 1, DAYm5_IDX(-5
 DAY_ORDER = sorted(DAY_IDXS)  # ascending index = oldest -> most recent
 
 
+def _alpaca_headers_from_env():
+    """Alpaca auth headers from APCA_API_KEY_ID / APCA_API_SECRET_KEY, or None."""
+    key = os.environ.get("APCA_API_KEY_ID")
+    secret = os.environ.get("APCA_API_SECRET_KEY")
+    if key and secret:
+        return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    return None
+
+
 # --- Constants: external data sources (all OFF by default — see note below) ---
 # These hit yfinance sub-endpoints, TradingView, and Finviz PER TICKER.
 # Running them across 500 tickers is slow and can get you rate-limited, so each
@@ -129,11 +138,13 @@ CONFIG = {
     "EARNINGS_EXCLUSION_DAYS": 3,    # exclude tickers within N days of an earnings event (past or future)
     "DIP_QUALITY_MIN_SCORE": 50,     # minimum fundamental quality score (0-100) to qualify as a "quality dip"
    
-    "ALPACA_HEADERS": {
-        "APCA-API-KEY-ID": "PKGT4VDNU6I3UJVRNUFYT34PK2",        # your API key
-        "APCA-API-SECRET-KEY": "E9zQAKbXS5ATHJ399iqPGq5GaYqdKQq6DQDjcKrQQQDx", # your secret
-    },
-    "FINNHUB_API_KEY": "dafflm1r01quvmmfau5gdafflm1r01quvmmfau60",
+    # API keys are NOT stored in the code. They come from environment variables:
+    #   - GitHub Actions: repository secrets, passed in by the workflow (run_intraday.yml)
+    #   - Local runs: set them in your shell first, e.g.
+    #       export APCA_API_KEY_ID=...  APCA_API_SECRET_KEY=...  FINNHUB_API_KEY=...
+    # A missing key leaves the value as None; the feature that needs it is skipped.
+    "ALPACA_HEADERS": _alpaca_headers_from_env(),
+    "FINNHUB_API_KEY": os.environ.get("FINNHUB_API_KEY") or None,
 }
 
 def set_pkl_path(size=0):

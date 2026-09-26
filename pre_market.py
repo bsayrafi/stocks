@@ -290,6 +290,10 @@ def prefetch_pre_market(tickers: list, cfg: dict) -> dict | None:
     free limit on big lists). Returns {ticker: details} or None if disabled."""
     if not cfg.get("PREMARKET_ENABLED", True):
         return None
+    if _alpaca_headers(cfg.get("ALPACA_HEADERS")) is None:
+        print("Pre-market skipped: Alpaca keys not set "
+              "(APCA_API_KEY_ID / APCA_API_SECRET_KEY secrets or environment variables)")
+        return None
     feed = cfg.get("ALPACA_FEED", "auto")
     kw = dict(headers=cfg.get("ALPACA_HEADERS"), tz=cfg.get("MARKET_TZ", "America/New_York"),
               start_hhmm=cfg.get("PREMARKET_START", "04:00"), open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
