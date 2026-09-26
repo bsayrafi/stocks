@@ -16,3 +16,4 @@ finnhub-python
 requests
 numpy
 lxml
+tqdm
