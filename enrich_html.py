@@ -281,6 +281,9 @@ CONFIGH = {
     "SCORE_THRESHOLD": 3,          # out of 5 soft conditions
 
     # HTML report price chart (display only, not part of the signal)
+    "NTFY_ENABLED": True,          # push the report(s) to your phone via ntfy (needs NTFY_TOPIC)
+    "NTFY_FILES": ["up"],          # which files to send: any of "up", "down", "csv"
+    "NTFY_MAX_MB": 15,             # ntfy.sh attachment limit; bigger files are announced without the file
     "CSV_REPORT": True,            # also write reports/<name>_signal_report_<timestamp>.csv (1 row per ticker)
     "PROFILE": True,               # print a timing breakdown at the end of main()
     "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
@@ -318,7 +321,7 @@ CONFIGH = {
     # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
     # Key: here, or the FINNHUB_API_KEY environment variable.
     "FINNHUB_API_KEY": _SECRETS.get("FINNHUB_API_KEY"),  # from constants.CONFIG
-    "NEWS_DAYS": 1,                # 0 = today only, 1 = today + yesterday, ...
+    "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
     "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
     "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,
@@ -2200,6 +2203,55 @@ def _snake(label: str) -> str:
     return out.strip("_")
 
 
+def _ascii(text: str) -> str:
+    """HTTP header values must be plain ASCII."""
+    return str(text).encode("ascii", "replace").decode("ascii")
+
+
+def send_ntfy_file(path: str, topic: str | None = None, server: str | None = None,
+                   token: str | None = None, title: str | None = None, message: str | None = None,
+                   tags: str | None = None, priority: str | None = None, timeout: float = 60) -> bool:
+    """Send a file (e.g. the HTML report) as an ntfy attachment; the phone app
+    shows a notification you tap to open the file.
+    topic / server / token come from the arguments, else constants.CONFIG
+    ("NTFY_TOPIC", "NTFY_SERVER", "NTFY_TOKEN"), else the environment variables
+    of the same names. Server defaults to https://ntfy.sh.
+    Files larger than CONFIGH["NTFY_MAX_MB"] are announced without the file.
+    Returns True if ntfy accepted it."""
+    topic = topic or _SECRETS.get("NTFY_TOPIC") or os.environ.get("NTFY_TOPIC")
+    if not topic:
+        print("ntfy: no NTFY_TOPIC set - skipped")
+        return False
+    server = (server or _SECRETS.get("NTFY_SERVER") or os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
+    token = token or _SECRETS.get("NTFY_TOKEN") or os.environ.get("NTFY_TOKEN")
+
+    size_mb = os.path.getsize(path) / 1024 / 1024
+    headers = {"Title": _ascii(title or os.path.basename(path))}
+    if tags:
+        headers["Tags"] = _ascii(tags)
+    if priority:
+        headers["Priority"] = _ascii(priority)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        if size_mb > CONFIGH.get("NTFY_MAX_MB", 15):
+            body = (f"{message or ''}\n{os.path.basename(path)} is {size_mb:.1f} MB - too big to attach; "
+                    f"get it from the GitHub Actions run.").strip()
+            resp = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=timeout)
+        else:
+            headers["Filename"] = _ascii(os.path.basename(path))
+            if message:
+                headers["Message"] = _ascii(message)
+            with open(path, "rb") as f:
+                resp = requests.put(f"{server}/{topic}", data=f, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        print(f"ntfy: sent {os.path.basename(path)} ({size_mb:.1f} MB) to {server}/<topic>")
+        return True
+    except requests.RequestException as e:
+        print(f"ntfy: failed to send {os.path.basename(path)}: {e}")
+        return False
+
+
 def report_to_row(report: dict, report_group: str) -> dict:
     """Flatten one ticker's report into a single CSV row (column -> value).
     Lists of text (news, buyback/guidance headlines, rating actions) keep only
@@ -2422,8 +2474,10 @@ def main(tickers, fileapp):
     #timestamp = datetime.now(tz_gmt3).strftime("%Y%m%d_%H%M")
     timestamp = constants.get_dayprefix()+"_" + constants.get_timeprefix()
 
+    out_paths = {}
     for direction in ("up", "down"):
         out_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}_{direction}.html")
+        out_paths[direction] = out_path
         report_title = f"{fileapp}_Signal Report {timestamp}_{direction}"
         body = "\n".join(sections[direction]) or (
             f'<section class="card"><p class="note">No tickers with a {direction}-sloping channel.</p></section>')
@@ -2435,9 +2489,27 @@ def main(tickers, fileapp):
         csv_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}.csv")
         try:
             write_csv_report(csv_rows, csv_path)
+            out_paths["csv"] = csv_path
             print(f"CSV report ({len(csv_rows)} rows) written to {csv_path}")
         except Exception as e:
             print(f"CSV report failed: {type(e).__name__}: {e}")
+
+    if CONFIGH.get("NTFY_ENABLED", True):
+        buys = {g: [r["ticker"] for r in csv_rows if r.get("report") == g and r.get("signal") == "BUY"]
+                for g in ("up", "down")}
+        counts = {g: sum(1 for r in csv_rows if r.get("report") == g) for g in ("up", "down")}
+        for kind in CONFIGH.get("NTFY_FILES", ["up"]):
+            path = out_paths.get(kind)
+            if not path or not os.path.exists(path):
+                continue
+            if kind in buys:
+                msg = f"{counts[kind]} tickers, BUY_SIGNAL: {', '.join(buys[kind]) or 'none'}"
+                tags = "chart_with_upwards_trend" if kind == "up" else "chart_with_downwards_trend"
+                prio = "high" if (kind == "up" and buys["up"]) else "default"
+            else:
+                msg, tags, prio = f"{len(csv_rows)} rows", "page_facing_up", "default"
+            send_ntfy_file(path, title=f"{fileapp} {kind} report {timestamp}", message=msg,
+                           tags=tags, priority=prio)
 
     if CONFIGH.get("PROFILE", True):
         print_profile_summary(time.perf_counter() - run_t0, len(tickers))
