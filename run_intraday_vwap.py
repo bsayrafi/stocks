@@ -101,8 +101,10 @@ def loadData(num, force_redownload=False):
     }
   print(my_filters)
   with profile_step("main: finviz ticker list"):
-    filteredTickers = tickers.get_tickers(my_filters)
-
+    if num!=3:
+        filteredTickers = tickers.get_tickers(my_filters)
+    else:
+        filteredTickers = debugTickers
   with profile_step("main: daily price download"):
     return data_loader.load_or_download_market_data(filteredTickers,force_redownload)
 
@@ -125,8 +127,6 @@ def     setEnable(num):
 
 def runCoreScreener(num=2, force_redownload=True) :
         
-    # 3. Run Core Screener
-    force_redownload=True
 
     start = time.time()
     reset_profile()   # timings are per run (small caps and large caps reported separately)
@@ -213,10 +213,14 @@ def runCoreScreener(num=2, force_redownload=True) :
 
 
 
+debugTickers = [
+        "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO", "AU", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG", "BWA", "CART", "CAT", "CDE", "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", "CORT", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR", "DOCN", "DT", "ECL", "EMR", "ENTG", "EOG", "ESTC", "ETSY", "EXEL", "EXLS", "EXPE", "FCX", "FIGS", "FIVE", "FIVN", "FLS", "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GOOG", "GOOGL", "GTES", "HALO", "HQY", "INGM", "INOD", "INSW", "INTC", "IOT", "IREN", "KEYS", "KLAC", "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META", "MNST", "MPC", "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS", "NEM", "NESR", "NOW", "NTAP", "NVDA", "NWS", "NWSA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
+        ]
   # 2 Large
   # 1 Medium
   # 0 small
 setEnable(1)
+#runCoreScreener(num=3, force_redownload=False)
 runCoreScreener(num=0, force_redownload=True)
 runCoreScreener(num=2, force_redownload=True)
 setEnable(0)
