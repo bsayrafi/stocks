@@ -1,0 +1,35 @@
+name: Cleanup Old Workflow Runs
+
+on:
+  schedule:
+    - cron: '17 * * * *'   # every hour at :17 (UTC)
+  workflow_dispatch:        # manual button too
+
+permissions:
+  actions: write            # needed to delete runs
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete runs older than 12 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          cutoff=$(date -u -d '12 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Deleting completed runs created before $cutoff"
+
+          gh api -X GET --paginate "repos/$REPO/actions/runs" \
+            -f status=completed \
+            -f created="<$cutoff" \
+            -f per_page=100 \
+            --jq '.workflow_runs[].id' |
+          while read -r id; do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            echo "Deleting run $id"
+            gh api -X DELETE "repos/$REPO/actions/runs/$id" --silent \
+              || echo "  could not delete $id"
+          done

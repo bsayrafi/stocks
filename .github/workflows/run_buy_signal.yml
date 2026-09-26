@@ -19,32 +19,38 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Set up Python
+# Step 2: Set up Python
       - name: Set up Python 3.10
+        id: py
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # Step 3: Install required libraries
-      - name: Install Dependencies
-        run: |
-          pip install --upgrade pip
-          pip install pandas openpyxl yfinance pyarrow tradingview-ta finvizfinance fundamentalanalysis finnhub-python requests numpy lxml
-
-      # Step 3.5: Today's UTC date - the script's daily cache is keyed on it too
-      - name: Get cache date
-        id: cachedate
-        run: echo "today=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
-
-      # Step 3.6: Restore today's newest cache (nothing on the first run of the day,
-      # so that run fetches everything fresh)
-      - name: Restore daily cache
-        uses: actions/cache/restore@v4
+      # Step 3a: Restore the saved virtualenv (key changes only when requirements.txt or Python changes)
+      - name: Restore virtualenv
+        id: venv-cache
+        uses: actions/cache@v4
         with:
-          path: cache
-          key: screener-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
-          restore-keys: |
-            screener-cache-${{ steps.cachedate.outputs.today }}-
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('requirements.txt') }}
+
+      # Step 3b: Only on a cache miss - install with uv (much faster than pip)
+      - name: Set up uv
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Dependencies
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        run: |
+          uv venv .venv --python "${{ steps.py.outputs.python-path }}"
+          uv pip install --python .venv -r requirements.txt
+
+      # Step 3c: Make `python` in later steps use the virtualenv
+      - name: Activate virtualenv
+        run: |
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+  
 
       # Step 4: Run your cleaned Python script
       - name: Run Screener Script
