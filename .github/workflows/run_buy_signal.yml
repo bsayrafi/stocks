@@ -61,6 +61,8 @@ jobs:
           APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
         # IMPORTANT: Make sure this matches the exact name of your main script file
         run: |
           mkdir -p reports
