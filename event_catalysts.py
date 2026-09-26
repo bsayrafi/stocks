@@ -21,6 +21,7 @@ Install: pip install yfinance pandas
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import asdict, dataclass, field
 
 import pandas as pd
@@ -290,6 +291,63 @@ def get_earnings_and_ratings(
     return out
 
 
+# ---------------------------------------------------------------- headline attribution
+# News feeds tag a ticker on stories that merely MENTION it (sector roundups,
+# peers' earnings...). A buyback/guidance keyword only counts for this ticker if
+# the headline actually names the company - see headline_mentions_company().
+
+_NAME_SUFFIXES = re.compile(
+    r"[,.]?\s+(inc|incorporated|corp|corporation|company|co|ltd|limited|plc|llc|lp|l\.p|"
+    r"holdings?|group|n\.v|s\.a|ag|se|sa|nv|class [a-c]|common stock|ordinary shares|adr)\.?$",
+    re.IGNORECASE)
+# first words too generic to identify a company on their own
+_GENERIC_FIRST_WORDS = {
+    "the", "american", "first", "united", "general", "international", "national", "global",
+    "advanced", "applied", "digital", "new", "north", "south", "east", "west", "royal",
+    "world", "data", "energy", "health", "bank", "capital", "financial", "real", "great",
+    "super", "blue", "green", "golden", "gold", "silver", "air", "bio", "micro", "smart",
+}
+
+
+def company_aliases(ticker: str, info: dict | None) -> list[str]:
+    """Names a headline might use for this company, from yfinance .info:
+    'Apple Inc.' -> ['Apple'], 'ACM Research, Inc.' -> ['ACM Research', 'ACM'],
+    'Advanced Micro Devices, Inc.' -> ['Advanced Micro Devices'] (generic first word skipped).
+    Returns [] if .info has no name."""
+    aliases = []
+    for raw in ((info or {}).get("shortName"), (info or {}).get("longName")):
+        if not raw:
+            continue
+        name = str(raw).strip()
+        for _ in range(3):  # strip stacked suffixes: "Foo Holdings, Inc." -> "Foo"
+            name = _NAME_SUFFIXES.sub("", name).strip(" ,.")
+        if name.lower().startswith("the "):
+            name = name[4:]
+        if len(name) >= 3 and name not in aliases:
+            aliases.append(name)
+        first = name.split()[0].strip(",.&") if name.split() else ""
+        distinctive = (len(first) >= 4 or (first.isupper() and len(first) >= 3)) \
+            and first.lower() not in _GENERIC_FIRST_WORDS
+        if distinctive and first not in aliases:
+            aliases.append(first)
+    return aliases
+
+
+def headline_mentions_company(title: str, ticker: str, aliases: list[str]) -> bool:
+    """True if the headline names the company (any alias, whole words, any case)
+    or its ticker in a ticker-like form: (AAPL), NASDAQ:AAPL, $AAPL, or a bare
+    upper-case symbol of 3+ letters (short symbols like ON/IT are too ambiguous bare)."""
+    if not title:
+        return False
+    for a in aliases:
+        if re.search(r"(?<![\w])" + re.escape(a) + r"(?![\w])", title, re.IGNORECASE):
+            return True
+    t = re.escape(ticker.upper())
+    if re.search(r"(\(|\$|:\s?)" + t + r"(?![\w])", title):
+        return True
+    return len(ticker) >= 3 and re.search(r"(?<![\w$])" + t + r"(?![\w])", title) is not None
+
+
 def get_event_catalysts(
     ticker: str,
     news_lookback_days: int = 14,
@@ -384,8 +442,13 @@ def get_event_catalysts(
         except Exception:
             pass
 
+    # Only headlines that name THIS company count (news feeds also tag peers' and
+    # sector stories). Without a company name in .info we can't tell, so keep all.
+    aliases = company_aliases(ticker, info)
     for pub_date, title in headlines:
         if pub_date and pub_date < cutoff:
+            continue
+        if aliases and not headline_mentions_company(title, ticker, aliases):
             continue
         lower = (title or "").lower()
         if any(k in lower for k in buyback_kw):

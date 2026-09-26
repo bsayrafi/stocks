@@ -509,7 +509,7 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
             if passes_gap_filter:
                 aboveSMA = 1 if days[DAYm1_IDX]['SMA50'] < days[DAYm1_IDX]['Close'] else 0
                 results2.append({
-                    " Ticker ": symbol,
+                    " Ticker ": '"' + symbol + '",',
                     **company_block,
                     **oc_block,
                     "ATR(14) ": f"{daily_atr_val:.2f} ",

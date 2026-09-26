@@ -283,7 +283,7 @@ CONFIGH = {
     # HTML report price chart (display only, not part of the signal)
     "CSV_REPORT": True,            # also write reports/<name>_signal_report_<timestamp>.csv (1 row per ticker)
     "PROFILE": True,               # print a timing breakdown at the end of main()
-    "MAX_WORKERS": 8,              # tickers screened in parallel (1 = one at a time)
+    "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
     "CACHE_ENABLED": True,         # cache once-a-day data (.info, analyst, earnings...) on disk
     "CACHE_DIR": "cache",
     "FINNHUB_MAX_PER_MIN": 55,     # Finnhub free tier allows 60 calls/minute
@@ -300,6 +300,7 @@ CONFIGH = {
     "LRC_ENABLED": True,
     "LRC_LENGTH": None,            # bars to fit (1h bars); None = the whole chart window
     "LRC_DEV": 2.0,                # channel half-width, in std devs of the residuals
+    "LRC_MIN_R2_UP": 0.5,          # rising channels with R-squared below this go to the _down report
     "LRC_SOURCE": "Close",         # price column to fit: "Close", "High", "Low", "Open"
 
     # Pre-market price from Alpaca (display only). Keys come from the `headers`
@@ -317,7 +318,7 @@ CONFIGH = {
     # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
     # Key: here, or the FINNHUB_API_KEY environment variable.
     "FINNHUB_API_KEY": _SECRETS.get("FINNHUB_API_KEY"),  # from constants.CONFIG
-    "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
+    "NEWS_DAYS": 1,                # 0 = today only, 1 = today + yesterday, ...
     "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
     "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,
@@ -1247,11 +1248,20 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     # goes to the _up or _down report; LRC_ENABLED only controls whether it's shown.
     lrc_fit = linear_regression_channel(chart["ohlcv"], cfg.get("LRC_LENGTH"),
                                         cfg.get("LRC_DEV", 2.0), cfg.get("LRC_SOURCE", "Close"))
+    # "up" needs a rising channel AND a decent fit: a rising line through choppy
+    # prices (low R-squared) isn't a real uptrend, so it goes to the _down report.
+    min_r2 = cfg.get("LRC_MIN_R2_UP", 0.5)
     if lrc_fit is not None:
-        trend_dir = "up" if lrc_fit["slope_per_bar"] >= 0 else "down"
+        if lrc_fit["slope_per_bar"] < 0:
+            trend_dir, trend_reason = "down", "channel sloping down"
+        elif lrc_fit["r2"] < min_r2:
+            trend_dir, trend_reason = "down", f"channel rising but weak fit (R2 {lrc_fit['r2']} < {min_r2})"
+        else:
+            trend_dir, trend_reason = "up", f"channel rising (R2 {lrc_fit['r2']})"
     else:  # too few bars to fit - fall back to first vs last close in the window
         w = chart["ohlcv"]["Close"]
         trend_dir = "up" if float(w.iloc[-1]) >= float(w.iloc[0]) else "down"
+        trend_reason = "too few bars for a channel - first vs last close"
     lrc = lrc_fit if cfg.get("LRC_ENABLED", True) else None
     chart["lrc"] = lrc
 
@@ -1328,6 +1338,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         "above_vwap": above_vwap,
         "lrc": lrc,
         "trend_dir": trend_dir,
+        "trend_reason": trend_reason,
         "pre_market": pre_market,
         "pre_market_time": pre_market_time,
         "pre_market_info": pre_market_info,
@@ -2257,6 +2268,7 @@ def report_to_row(report: dict, report_group: str) -> dict:
     lrc = report.get("lrc") or {}
     row.update({
         "trend_dir": report.get("trend_dir"),
+        "trend_reason": report.get("trend_reason"),
         "channel_lower": lrc.get("last_lower"), "channel_mid": lrc.get("last_mid"),
         "channel_upper": lrc.get("last_upper"), "channel_slope_pct_day": lrc.get("slope_pct_per_day"),
         "channel_r2": lrc.get("r2"), "channel_position_pct": lrc.get("position_pct"),
