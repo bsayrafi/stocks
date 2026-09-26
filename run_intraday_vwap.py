@@ -220,9 +220,9 @@ debugTickers = [
   # 1 Medium
   # 0 small
 setEnable(1)
-runCoreScreener(num=3, force_redownload=False)
-#runCoreScreener(num=0, force_redownload=True)
-#runCoreScreener(num=2, force_redownload=True)
+#runCoreScreener(num=3, force_redownload=False)
+runCoreScreener(num=0, force_redownload=True)
+runCoreScreener(num=2, force_redownload=True)
 setEnable(0)
 
 
