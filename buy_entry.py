@@ -80,6 +80,63 @@ def safe_download(ticker, retries=3, delay=1.5, min_rows=30, **kwargs):
     return last_df
 
 
+def _extract_one(raw, ticker):
+    """Pull one ticker's OHLCV out of a batched yf.download frame."""
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+    cols = raw.columns
+    if isinstance(cols, pd.MultiIndex):
+        if ticker in cols.get_level_values(0):        # group_by="ticker"
+            sub = raw[ticker].copy()
+        elif ticker in cols.get_level_values(-1):     # group_by="column"
+            sub = raw.xs(ticker, axis=1, level=-1).copy()
+        else:
+            return pd.DataFrame()
+    else:
+        sub = raw.copy()                              # single-ticker frame
+    sub = _flatten_columns(sub)
+    if any(c not in sub.columns for c in OHLCV):
+        return pd.DataFrame()
+    # A batched frame is the union of all tickers' dates; rows where this
+    # ticker didn't trade are all-NaN. A solo download wouldn't have them.
+    sub = sub.dropna(subset=OHLCV, how="all")
+    return _trim_incomplete_tail(sub)
+
+
+def download_many(tickers, min_rows=30, chunk_size=100, fallback_retries=1,
+                  fallback_delay=1.0, **kwargs):
+    """
+    Fetch many tickers in a few threaded batch calls instead of one blocking
+    call per ticker. Tickers that come back short/empty get a solo retry.
+    Returns {ticker: DataFrame} (possibly empty; caller validates).
+    """
+    tickers = list(dict.fromkeys(tickers))            # dedupe, keep order
+    frames = {}
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        try:
+            raw = yf.download(chunk, auto_adjust=True, progress=False,
+                              group_by="ticker", threads=True, **kwargs)
+        except Exception as exc:
+            log.warning("batch download failed (%s) — %s", type(exc).__name__, exc)
+            raw = pd.DataFrame()
+        for t in chunk:
+            try:
+                frames[t] = _extract_one(raw, t)
+            except Exception as exc:
+                log.warning("%s: extract failed — %s", t, exc)
+                frames[t] = pd.DataFrame()
+
+    retry = [t for t, df in frames.items() if df.empty or len(df) < min_rows]
+    if retry and fallback_retries > 0:
+        log.info("retrying %d ticker(s) individually: %s", len(retry), retry)
+        for t in retry:
+            frames[t] = safe_download(t, retries=fallback_retries,
+                                      delay=fallback_delay, min_rows=min_rows,
+                                      **kwargs)
+    return frames
+
+
 # ---------------------------------------------------------------------------
 # Indicators
 # ---------------------------------------------------------------------------
@@ -102,8 +159,11 @@ def check_buy_zone_confirmation(tickers, lookback_days=60, fetch_period="1y",
                                 atr_period=14, atr_stop_multiplier=0.5, reward_risk_ratio=1.5,
                                 break_lookback=10, pullback_window=15, pullback_tolerance_pct=2.0,
                                 bounce_tolerance_pct=3.0, ma_touch_tolerance_pct=1.0,
-                                min_risk_pct=0.5):
+                                min_risk_pct=0.5, data=None):
     """
+    data: optional {ticker: DataFrame} from download_many(); fetched here in a
+    single batch if not supplied.
+
     fetch_period governs history pulled (needs >= 56 bars for SMA50 + its prior
     reference); lookback_days governs how many recent BARS the swing-structure
     detection looks at. These were previously the same knob, which capped the
@@ -117,10 +177,15 @@ def check_buy_zone_confirmation(tickers, lookback_days=60, fetch_period="1y",
     # SMA50 needs 50 bars; sma50_prior reads 6 bars back from the end of it.
     min_rows = max(60, atr_period + 1, swing_window * 2 + 1)
 
+    tickers = list(dict.fromkeys(tickers))  # duplicates would be fetched/reported twice
+    if data is None:
+        data = download_many(tickers, period=fetch_period, interval="1d",
+                             min_rows=min_rows)
+
     for ticker in tickers:
         try:
-            df = safe_download(ticker, period=fetch_period, interval="1d",
-                               min_rows=min_rows)
+            df = data.get(ticker, pd.DataFrame())
+            df = df.copy() if df is not None else pd.DataFrame()
             ok, reason = validate_ohlcv(df, min_rows)
             if not ok:
                 log.warning("%s: NoData — %s", ticker, reason)
@@ -215,12 +280,14 @@ def check_buy_zone_confirmation(tickers, lookback_days=60, fetch_period="1y",
                                and df["Close"].iloc[-5:-1].min() < sma50)
             volume_confirmation = bool(volume > 1.5 * vol_avg) if pd.notna(vol_avg) else False
 
-            lows = win["Low"]
+            lows = win["Low"].to_numpy(dtype=float)
             swing_lows = []
-            for i in range(swing_window, len(lows) - swing_window):
-                window = lows.iloc[i - swing_window:i + swing_window + 1]
-                if lows.iloc[i] == window.min():
-                    swing_lows.append(float(lows.iloc[i]))
+            n = len(lows)
+            if n > 2 * swing_window:
+                w = 2 * swing_window + 1
+                wmins = np.nanmin(np.lib.stride_tricks.sliding_window_view(lows, w), axis=1)
+                centre = lows[swing_window:n - swing_window]
+                swing_lows = centre[centre == wmins].tolist()
             higher_lows = bool(len(swing_lows) >= 3
                                and swing_lows[-1] > swing_lows[-2] > swing_lows[-3])
 
@@ -322,14 +389,17 @@ def check_buy_zone_confirmation(tickers, lookback_days=60, fetch_period="1y",
 # Intraday entry timing
 # ---------------------------------------------------------------------------
 
-def find_intraday_entry(ticker, entry_type="None", interval="1h", period="5d"):
+def find_intraday_entry(ticker, entry_type="None", interval="1h", period="5d", df=None):
     """
     Lightweight entry-timing check for swing trades (few days to few weeks hold).
     Goal: avoid buying into an extended spike, not precision-time the entry.
     Extension tolerance flexes by entry_type since different patterns carry
     different amounts of expected intraday movement.
     """
-    df = safe_download(ticker, period=period, interval=interval, min_rows=10)
+    if df is None:
+        df = safe_download(ticker, period=period, interval=interval, min_rows=10)
+    else:
+        df = df.copy()
     ok, reason = validate_ohlcv(df, 10)
     if not ok:
         return {"Ticker": ticker, "Error": f"NoData ({reason})"}
@@ -379,3 +449,21 @@ def find_intraday_entry(ticker, entry_type="None", interval="1h", period="5d"):
         **signals,
         "Entry_Score": f"{sum(signals.values())}/3",
     }
+
+
+def find_intraday_entries(confirmed_df, interval="1h", period="5d"):
+    """Batched version: one download for all confirmed tickers."""
+    if confirmed_df is None or confirmed_df.empty:
+        return pd.DataFrame()
+    pairs = list(zip(confirmed_df["Ticker"], confirmed_df["Entry_Type"]))
+    data = download_many([t for t, _ in pairs], period=period,
+                         interval=interval, min_rows=10)
+    out = []
+    for t, et in pairs:
+        try:
+            out.append(find_intraday_entry(t, entry_type=et, interval=interval,
+                                           period=period, df=data.get(t)))
+        except Exception as exc:
+            log.exception("%s: intraday failed", t)
+            out.append({"Ticker": t, "Error": f"{type(exc).__name__}: {exc}"})
+    return pd.DataFrame(out)

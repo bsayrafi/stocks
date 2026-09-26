@@ -85,7 +85,9 @@ def run_enrichment(num, runtype="all"):
         else:
             enrich_html.main(enrichment_tickers, fileapp)
 
+            buy_start = time.time()
             results2_entry = check_buy_zone_confirmation(enrichment_tickers)
+            print(f"check_buy_zone_confirmation took {time.time() - buy_start:.1f}s")
             all_df = results2_entry["all"]
             elapsed = time.time() - start
         
@@ -118,10 +120,7 @@ def run_enrichment(num, runtype="all"):
                 confirmed_df = results2_entry["confirmed"]
         
                 if not confirmed_df.empty:
-                    intraday_results = []
-                    for _, row in confirmed_df.iterrows():
-                        intraday_results.append(find_intraday_entry(row["Ticker"], entry_type=row["Entry_Type"]))
-                    intraday_df = pd.DataFrame(intraday_results)
+                    intraday_df = find_intraday_entries(confirmed_df)
         
                     print(intraday_df.to_string(index=False))
         
@@ -145,7 +144,7 @@ def run_enrichment(num, runtype="all"):
 
 
 #num = 0 small
-runtype = "html"
+runtype = "all"
 #run_enrichment(3, runtype)
 
 run_enrichment(0, runtype)
