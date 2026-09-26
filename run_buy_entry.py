@@ -26,28 +26,34 @@ os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 
 small_enrichment_tickers = [
-    "QTWO", "PGY", "RIGL", "ETON", 
-    "MITK", "THRM", "GPRE", "PGY", "ARLO", "DSP", "MLKN", "PCRX", "HCSG", "HIVE", "GDYN",
-    "WWW", "MG", "ASTH", "GCT", "NX", "SWBI", "ZVRA", "KRP", "PGNY", "XPRO",
-    "GNK", "GOLD", "PRGS", "INVX", "MNTN", "MGY", "NXDR", "PANL", "ATEN", "IRWD", "ARHS", "PAYS",
-    "VFF", "SWIM", "HOPE", "REPX", "AMN", "QUBT", "QBTS", "IONQ", "NOK", "HPE",
+   "AMN", "ARHS", "ARLO", "ASTH", "ATEN", "CARS", "DSP", "ETON", 
+    "GCT", "GDYN", "GNK", "GOLD", "GPRE", "HCSG", "HIVE", "HOPE", 
+    "HPE", "INVX", "IONQ", "IRWD", "KRP", "MG", "MGY", "MITK", 
+    "MLKN", "MNTN", "NOK", "NX", "NXDR", "OMER", "OPRT", "PANL", 
+    "PAYS", "PCRX", "PGNY", "PGY", "PRGS", "QBTS", "QNST", "QTWO", 
+    "QUBT", "REPX", "RIGL", "SWBI", "SWIM", "THRM", "VFF", "WWW", 
+    "XPRO", "ZVRA"
 ]
 
 large_enrichment_tickers = [
 
-    "A", "AAPL", "AAOI", "ABNB", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", 
-    "APH", "ARMK", "ARQT", "ATRO", "ATI", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG",
-    "CART", "CAT", "CDE", "CDNA", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", "CRM", "CRDO", "CRWD", "CRVW", 
-    "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR",
-    "DOCN", "DT", "ECL", "EMR", "ESTC", "EXLS", "ENTG", "FCX", "FIVE", "FIVN", "FLS",
-    "FLYW", "FORM", "FRSH", "FTI", "GOOG", "GEV", "GLW", "GTES", "HALO", "HQY", "INGM", "IREN",
-    "IOT", "INTC", "KEYS", "KLAC", "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META",
-    "MNST", "MRK", "MRVL", "MSFT", "MTSI", "MU", "NEM", "NESR", "NOW", "NTAP", "NBIS",
-    "NVDA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS",
-    "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "ROK", "RKLB", "SCHW", "SHC", "SOFI", "SKHY", "SMTC", 
-    "SITM", "SLB", "SMTC", "SNDK", "SNX", "SSRM", "SPCX", "TER", "TKR", "TMO", "TTC", "TSLA", "TSM",
-    "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", "VSH", "VST", "WAT", "WAY", "WDAY", "WK",
-    "WSM", "XYZ", "ZBRA", "ZM"
+    "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", 
+    "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO", 
+    "AU", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG", "BWA", "CART", 
+    "CAT", "CDE", "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", 
+    "CORT", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX", 
+    "DASH", "DDOG", "DELL", "DGX", "DHR", "DOCN", "DT", "ECL", "EMR", "ENTG", 
+    "EOG", "ESTC", "ETSY", "EXEL", "EXLS", "EXPE", "FCX", "FIGS", "FIVE", "FIVN", 
+    "FLS", "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GOOG", "GOOGL", "GTES", 
+    "HALO", "HQY", "INGM", "INOD", "INSW", "INTC", "IOT", "IREN", "KEYS", "KLAC", 
+    "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META", "MNST", "MPC", 
+    "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS", "NEM", "NESR", "NOW", 
+    "NTAP", "NVDA", "NWS", "NWSA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", 
+    "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", 
+    "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", 
+    "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", 
+    "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", 
+    "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
 
 ]
 
