@@ -131,7 +131,7 @@ def run_enrichment(num, runtype="all"):
                     header_text="FFFFFF",   
                 )
 
-                 excel_writer.export_df_with_row_colors(
+                excel_writer.export_df_with_row_colors(
                     df=dips,
                     file_path="a"+csv_filename,
                     target_col="rank",
@@ -140,7 +140,7 @@ def run_enrichment(num, runtype="all"):
                     header_bg="1F4E78",    
                     header_text="FFFFFF",   
                 )
-                 excel_writer.export_df_with_row_colors(
+                excel_writer.export_df_with_row_colors(
                     df=trends,
                     file_path="b"+csv_filename,
                     target_col="rank",
