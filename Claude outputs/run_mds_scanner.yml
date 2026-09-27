@@ -1,0 +1,84 @@
+name: Run MDS Swing Scanner
+
+# Daily Multi-Day Swing scan after the US close (21:30 UTC = 17:30 ET in summer,
+# 16:30 ET in winter), plus a manual button.
+on:
+  workflow_dispatch:
+    inputs:
+      size:
+        description: "finviz market-cap bucket (0 small, 1 mid, 2 +mid, 3 +micro)"
+        default: "2"
+  schedule:
+    - cron: "30 21 * * 1-5"
+
+concurrency:
+  group: run-mds-scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        id: py
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Restore virtualenv
+        id: venv-cache
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Set up uv
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Dependencies
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        run: |
+          uv venv .venv --python "${{ steps.py.outputs.python-path }}"
+          uv pip install --python .venv -r requirements.txt
+
+      - name: Activate virtualenv
+        run: |
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+
+      - name: Restore daily cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: mds-cache-${{ github.run_id }}
+          restore-keys: mds-cache-
+
+      - name: Run MDS daily scan
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          mkdir -p reports data cache live
+          python run_mds_scanner.py daily --size "${{ github.event.inputs.size || '2' }}"
+
+      - name: Save daily cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: mds-cache-${{ github.run_id }}
+
+      - name: Upload report + watchlist
+        uses: actions/upload-artifact@v4
+        with:
+          name: MDS_${{ github.run_id }}
+          path: |
+            reports/MDS_*.html
+            reports/MDS_*.csv
+            live/mds_watchlist.json
+          retention-days: 7

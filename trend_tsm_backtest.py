@@ -292,10 +292,10 @@ def main():
 
     if args.phase == "cache":
         import os as _os
-        api_key = _os.environ.get("ALPACA_API_KEY")
-        api_secret = _os.environ.get("ALPACA_SECRET_KEY")
+        api_key = _os.environ.get("APCA_API_KEY_ID") or _os.environ.get("ALPACA_API_KEY_ID") or _os.environ.get("ALPACA_API_KEY")
+        api_secret = _os.environ.get("APCA_API_SECRET_KEY") or _os.environ.get("ALPACA_API_SECRET_KEY") or _os.environ.get("ALPACA_SECRET_KEY")
         if not api_key or not api_secret:
-            raise SystemExit("Set ALPACA_API_KEY / ALPACA_SECRET_KEY in your .env file.")
+            raise SystemExit("Alpaca keys not found: set APCA_API_KEY_ID / APCA_API_SECRET_KEY in your .env file.")
         cfg = dict(BASE_CONFIG)
         cfg["DAILY_LOOKBACK_YEARS"] = args.years
         if args.tickers:

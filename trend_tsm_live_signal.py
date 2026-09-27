@@ -55,7 +55,7 @@ four sections:
                             from entry. Informational only, no action implied.
 
 Setup:
-  - Same .env as the rest of this repo (ALPACA_API_KEY / ALPACA_SECRET_KEY).
+  - Same .env as the rest of this repo (APCA_API_KEY_ID / APCA_API_SECRET_KEY).
   - Set NTFY_TOPIC (env var or --ntfy-topic) to a PRIVATE, hard-to-guess string --
     ntfy.sh topics are public to anyone who knows the name. Install the ntfy app
     (iOS/Android), subscribe to that same topic name, done -- no account needed.
@@ -86,7 +86,13 @@ from fvg_data_pipeline_hourly import load_tickers_by_sector
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.timeframe import TimeFrame
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(usecwd=True))   # .env in the folder you run from (or a parent)
+    load_dotenv()                            # .env next to this file (or a parent)
+except ImportError:
+    pass
+
 
 STATE_PATH = "live/tsm_live_state.json"
 LIVE_LOOKBACK_YEARS = 2   # enough for the 250-day momentum horizon + 200-day EMA with room to spare
@@ -263,10 +269,11 @@ def main():
     sim_cfg["ENTRY_MAX_ADX"] = args.entry_max_adx
     sim_cfg["ENTRY_RSI_EXCLUDE_RANGE"] = tuple(args.entry_rsi_exclude) if args.entry_rsi_exclude else None
 
-    api_key = os.environ.get("ALPACA_API_KEY")
-    api_secret = os.environ.get("ALPACA_SECRET_KEY")
+    # .env uses Alpaca's standard names (APCA_*); older names kept as fallbacks
+    api_key = os.environ.get("APCA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY")
+    api_secret = os.environ.get("APCA_API_SECRET_KEY") or os.environ.get("ALPACA_API_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY")
     if not api_key or not api_secret:
-        raise SystemExit("Set ALPACA_API_KEY / ALPACA_SECRET_KEY in your .env file.")
+        raise SystemExit("Alpaca keys not found: set APCA_API_KEY_ID / APCA_API_SECRET_KEY in your .env file.")
     client = StockHistoricalDataClient(api_key, api_secret)
 
     state = load_state(args.state_path)

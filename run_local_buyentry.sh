@@ -25,7 +25,7 @@ if [[ -f .env ]]; then
 fi
 
 # 2. Ask for anything still missing
-for var in APCA_API_KEY_ID APCA_API_SECRET_KEY FINNHUB_API_KEY HF_TOKEN; do
+for var in APCA_API_KEY_ID APCA_API_SECRET_KEY FINNHUB_API_KEY HF_TOKEN NTFY_TOPIC; do
   if [[ -z "${!var:-}" ]]; then
     read -r -s -p "$var (Enter to skip): " value
     echo
@@ -36,7 +36,7 @@ for var in APCA_API_KEY_ID APCA_API_SECRET_KEY FINNHUB_API_KEY HF_TOKEN; do
 done
 
 # 3. Show what is set (never the values themselves)
-for var in APCA_API_KEY_ID APCA_API_SECRET_KEY FINNHUB_API_KEY HF_TOKEN; do
+for var in APCA_API_KEY_ID APCA_API_SECRET_KEY FINNHUB_API_KEY HF_TOKEN NTFY_TOPIC; do
   if [[ -n "${!var:-}" ]]; then echo "  $var: set"; else echo "  $var: NOT set"; fi
 done
 

@@ -41,6 +41,17 @@ except ImportError:
     finnhub = None
 import constants
 
+# Load a local .env file (VS Code / your own machine) into the environment, so
+# NTFY_TOPIC, APCA_*, FINNHUB_API_KEY... are found there too. Variables that are
+# already set (e.g. GitHub Actions secrets) are NOT overridden.
+# Needs: pip install python-dotenv  (optional - skipped if not installed)
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(usecwd=True))   # .env in the folder you run from (or a parent)
+    load_dotenv()                            # .env next to this file (or a parent)
+except ImportError:
+    pass
+
 # API keys live in constants.CONFIG (kept out of this file):
 #   CONFIG = {"ALPACA_HEADERS": {"APCA-API-KEY-ID": ..., "APCA-API-SECRET-KEY": ...},
 #             "FINNHUB_API_KEY": ...}
@@ -292,7 +303,7 @@ CONFIGH = {
     "FINNHUB_MAX_PER_MIN": 55,     # Finnhub free tier allows 60 calls/minute
     "CATALYST_NEWS_DAYS": 14,      # headlines scanned for buyback/guidance keywords
     "CHART_OPEN": False,           # chart collapsed by default (each card has a show/hide link)
-    "CHART_DAYS": 7,               # number of recent trading days of 1h candles to plot
+    "CHART_DAYS": 14,               # number of recent trading days of 1h candles to plot
     "CHART_MAS": [("ema", 9), ("ema", 50)],  # MA overlays drawn on the chart
     "POC_BINS": 50,                # price buckets for the volume profile / POC
     "MARKET_TZ": "America/New_York",
@@ -321,7 +332,7 @@ CONFIGH = {
     # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
     # Key: here, or the FINNHUB_API_KEY environment variable.
     "FINNHUB_API_KEY": _SECRETS.get("FINNHUB_API_KEY"),  # from constants.CONFIG
-    "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
+    "NEWS_DAYS": 1,                # 0 = today only, 1 = today + yesterday, ...
     "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
     "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,

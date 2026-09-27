@@ -145,6 +145,9 @@ CONFIG = {
     # A missing key leaves the value as None; the feature that needs it is skipped.
     "ALPACA_HEADERS": _alpaca_headers_from_env(),
     "FINNHUB_API_KEY": os.environ.get("FINNHUB_API_KEY") or None,
+    "NTFY_TOPIC": os.environ.get("NTFY_TOPIC") or None,
+
+
 }
 
 def set_pkl_path(size=0):

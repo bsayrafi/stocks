@@ -329,10 +329,10 @@ def main():
     parser.add_argument("--out", default="data/fvg_hourly_dataset.parquet", help="Output parquet path.")
     args = parser.parse_args()
 
-    api_key = os.environ.get("ALPACA_API_KEY")
-    api_secret = os.environ.get("ALPACA_SECRET_KEY")
+    api_key = os.environ.get("APCA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY")
+    api_secret = os.environ.get("APCA_API_SECRET_KEY") or os.environ.get("ALPACA_API_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY")
     if not api_key or not api_secret:
-        raise SystemExit("Set ALPACA_API_KEY / ALPACA_SECRET_KEY in your .env file.")
+        raise SystemExit("Alpaca keys not found: set APCA_API_KEY_ID / APCA_API_SECRET_KEY in your .env file.")
 
     cfg = dict(CONFIG)
     cfg["LOOKBACK_YEARS"] = args.years

@@ -1,0 +1,53 @@
+section,symbol,price,shares,composite_momentum,adx,rsi14,stage,quality_notes,reason,entry_date,unrealized_pct,as_of,score,rank
+confirmed_entry,NTAP,201.145,1,0.9649677959575813,14.797264608281758,63.15878521275696,running 111d,,,,,2026-09-25,0.691,3
+confirmed_entry,TXN,278.07,1,0.4721241535278207,14.183814812971422,69.53233830845771,running 124d,,,,,2026-09-25,0.679,5
+confirmed_entry,P,126.0,1,0.7262897238170766,25.10764825324503,73.07893361212754,"established, near 52w high",,,,,2026-09-25,0.605,12
+candidate,STX,916.83,0,1.4388377190988881,13.207861947472132,59.28122534483228,running 349d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.716,1
+candidate,DDOG,268.13,0,0.7333605310055435,17.984107853122353,84.12462908011867,running 106d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.704,2
+candidate,PANW,374.74,0,1.1990369084848909,16.988100436345963,66.97495498444917,running 106d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.691,4
+candidate,LITE,941.65,0,1.2866571506353028,12.466872274293271,56.41442302586161,established,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.667,6
+candidate,MU,1082.28,0,2.38535874242197,16.24311198359968,59.21344217229094,running 332d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.654,7
+candidate,TER,398.38,0,0.6624747839455885,12.61850665421654,60.803678737524166,running 292d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.654,8
+candidate,CRWD,252.13,0,1.375698635793384,25.148906945201286,70.99515868746639,running 110d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.642,9
+candidate,MRVL,261.935,0,1.0098254636408739,20.787450316889764,70.02034110467845,running 141d,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.642,10
+candidate,CIEN,356.91,0,0.36132152534359113,10.995840184436773,63.057232201294454,below its 200d avg,would size to 0 sh at current remaining cash,"confirmed & passes filter, slot available but insufficient remaining cash",,,2026-09-25,0.617,11
+candidate,LRCX,315.21,0,0.5772744132186972,11.223079329826167,53.356589806857826,running 346d,RSI near filter floor,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.543,13
+candidate,SNDK,1777.8,0,4.094869233080162,17.16799203740084,52.23029902527672,running 331d,RSI near filter floor,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.543,14
+candidate,ADI,393.6,0,0.5131371222711442,18.03478625596847,67.41086304565147,running 211d,,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.531,15
+candidate,ANET,206.55,0,0.5797550377808379,17.67515977666659,62.17349857006673,"running 120d, near 52w high",,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.531,16
+candidate,QCOM,201.97,0,0.4065694294836546,22.259568360453642,72.82593762879515,early,,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.531,17
+candidate,PLTR,189.67,1,0.3876355417761994,25.538954229394648,69.35890964159512,established,,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.42,18
+candidate,GLW,156.74,0,0.22837717808434185,9.071172366032474,51.74634984254222,early,RSI near filter floor,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.395,19
+candidate,MCHP,78.69,2,0.08262871774099038,15.393148531803394,60.66037735849057,just started,,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.395,20
+candidate,SWKS,89.34,1,0.5237393478478711,35.208771059296815,63.988312636961304,established,ADX near filter ceiling,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.395,21
+candidate,MPWR,1367.43,0,0.3067304626949202,22.3039023561847,64.55288178887832,just started,,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.383,22
+candidate,JBL,316.74,0,0.24600503217831216,16.69828321587154,54.26399447131999,early,RSI near filter floor,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.333,23
+candidate,KLAC,187.92,0,0.26477165558242916,15.070785707523383,52.11293260473588,early,RSI near filter floor,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.333,24
+candidate,NXPI,238.08,0,0.010004630720753662,17.773511808337336,57.64835467437698,"below its 200d avg, well off highs",,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.259,25
+candidate,SMCI,43.26,3,0.31977991386843535,26.920084412302167,58.709065021357375,established,,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.235,26
+candidate,ON,77.2,1,0.13940363411914922,20.486154849239934,53.992072480181214,"below its 200d avg, well off highs",RSI near filter floor,"confirmed & passes filter, but no free slot (portfolio full)",,,2026-09-25,0.21,27
+confirmed_exit,ELV,396.09,,,,,,,,2026-09-19,-0.036160116802530756,2026-09-25,,
+confirmed_exit,FFIV,443.06,,,,,,,,2026-09-19,0.025530634446682014,2026-09-25,,
+confirmed_exit,HPQ,31.3,,,,,,,,2026-09-19,-0.09011627906976738,2026-09-25,,
+watchlist,ACN,,,0.04825540015321196,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,AKAM,,,0.15054186978197925,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,AMAT,,,0.5779009930253998,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,APH,,,0.3556265718875754,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,AVGO,,,0.034689917434318145,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,CDW,,,0.008429895085274128,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,CRM,,,0.3800447019095481,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,CSCO,,,0.5634600779687714,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,CTSH,,,0.08811520437755525,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,FLEX,,,0.4273068029640396,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,FTNT,,,1.3862218928855827,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,GDDY,,,0.049505874545846235,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,IT,,,0.01473256204231238,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,MSFT,,,0.42911199881305756,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,MSI,,,0.043022737234037614,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,NOW,,,0.21937458645905905,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,NVDA,,,,13.152986784441936,43.987568730576136,,,confirmed but filtered (weak/late setup),,,2026-09-25,,
+watchlist,TEL,,,0.10870560245801139,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,VRSN,,,,16.652027366240677,45.93912897259124,,,confirmed but filtered (weak/late setup),,,2026-09-25,,
+watchlist,WDAY,,,0.280540952941853,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,
+watchlist,WDC,,,,11.510804994526737,47.03222159412097,,,confirmed but filtered (weak/late setup),,,2026-09-25,,
+watchlist,ZBRA,,,0.6329917978409889,,,,,"momentum positive, volume not confirming yet",,,2026-09-25,,

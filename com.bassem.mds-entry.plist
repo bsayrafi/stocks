@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  MDS 15-minute entry check. Fires every 15 minutes; run_mds_scanner.py entry
+  exits on its own outside 09:45-16:05 ET, so no timezone juggling is needed.
+  Install:
+    cp com.bassem.mds-entry.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.bassem.mds-entry.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bassem.mds-entry</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/bsayrafi/Documents/pworkspace/stocks/run_mds.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/bsayrafi/Documents/pworkspace/stocks/live/mds_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/bsayrafi/Documents/pworkspace/stocks/live/mds_launchd.err.log</string>
+</dict>
+</plist>

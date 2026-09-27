@@ -56,20 +56,6 @@
       "atr_at_entry": 8.073992857142864,
       "entry_stage": "running 116d, near 52w high"
     },
-    "ELV": {
-      "shares": 1,
-      "entry_price": 410.95,
-      "entry_date": "2026-09-19",
-      "atr_at_entry": 11.00814285714286,
-      "entry_stage": "running 103d"
-    },
-    "FFIV": {
-      "shares": 1,
-      "entry_price": 432.03,
-      "entry_date": "2026-09-19",
-      "atr_at_entry": 14.074428571428582,
-      "entry_stage": "running 140d, near 52w high"
-    },
     "KEYS": {
       "shares": 1,
       "entry_price": 335.0,
@@ -98,14 +84,28 @@
       "atr_at_entry": 5.549985714285709,
       "entry_stage": "running 85d, near 52w high"
     },
-    "HPQ": {
-      "shares": 3,
-      "entry_price": 34.4,
-      "entry_date": "2026-09-19",
-      "atr_at_entry": 1.6996428571428577,
-      "entry_stage": "established"
+    "NTAP": {
+      "shares": 1,
+      "entry_price": 201.145,
+      "entry_date": "2026-09-26",
+      "atr_at_entry": 7.686328571428571,
+      "entry_stage": "running 111d"
+    },
+    "TXN": {
+      "shares": 1,
+      "entry_price": 278.07,
+      "entry_date": "2026-09-26",
+      "atr_at_entry": 8.168849999999996,
+      "entry_stage": "running 124d"
+    },
+    "P": {
+      "shares": 1,
+      "entry_price": 126.0,
+      "entry_date": "2026-09-26",
+      "atr_at_entry": 7.001421428571431,
+      "entry_stage": "established, near 52w high"
     }
   },
-  "cash": 1121.4700000000007,
-  "last_run_date": "2026-09-19"
+  "cash": 1449.3050000000005,
+  "last_run_date": "2026-09-26"
 }

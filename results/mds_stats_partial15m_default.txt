@@ -1,0 +1,18 @@
+Period            2023-10-26 -> 2026-09-25  (2.9y)
+Equity            100,000 -> 93,520   CAGR -2.3%   MaxDD -23.2%   Sharpe -0.15
+Exposure          avg 3.3 positions, in market 78% of days
+Benchmark SPY     CAGR 25.5%   MaxDD -18.8%
+
+All signals (unconstrained): 771 trades
+  win rate 30%   avg R +0.06   median R -1.04   profit factor 1.08   avg hold 5.0 sessions
+  exit reasons: stop 474, tp2 96, time 89, lrc_break 75, breakeven 37
+  by year (n, avg R): 2023: 50 / +1.11, 2024: 221 / +0.04, 2025: 329 / -0.06, 2026: 171 / +0.01
+  by entry type: level_bounce: 340 / -0.09, vwap_reclaim: 431 / +0.17
+  by quadrant: Improving: 771 / +0.06
+
+Portfolio (taken): 498 trades
+  win rate 30%   avg R -0.02   median R -1.04   profit factor 0.98   avg hold 4.9 sessions
+  exit reasons: stop 309, time 59, tp2 59, lrc_break 53, breakeven 18
+  by year (n, avg R): 2023: 21 / +1.02, 2024: 164 / +0.04, 2025: 194 / -0.16, 2026: 119 / -0.05
+  by entry type: level_bounce: 219 / -0.12, vwap_reclaim: 279 / +0.06
+  by quadrant: Improving: 498 / -0.02
