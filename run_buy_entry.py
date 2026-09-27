@@ -20,6 +20,10 @@ import event_catalysts
 import buy_entry
 from buy_entry import *
 from event_catalysts import *
+from flow_common import fetch_intraday_bars
+from dip_confirm import score_dips
+from trend_confirm import score_trends
+
 
 # 2. Securely load API Token
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
@@ -52,7 +56,7 @@ large_enrichment_tickers = [
     "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", 
     "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", 
     "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", 
-    "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", 
+   "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", 
     "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
 
 ]
@@ -60,7 +64,8 @@ large_enrichment_tickers = [
 
 debug_enrichment_tickers = [
 
-    "A", "AAPL"
+    "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", 
+    "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO",
     ]
 
 def run_enrichment(num, runtype="all"):
@@ -92,7 +97,11 @@ def run_enrichment(num, runtype="all"):
             enrich_html.main(enrichment_tickers, fileapp)
 
             buy_start = time.time()
-            results2_entry = check_buy_zone_confirmation(enrichment_tickers)
+            #results2_entry = check_buy_zone_confirmation(enrichment_tickers)
+            bars = fetch_intraday_bars(dip_list + trend_list)   # one download for both
+            dips = score_dips(dip_list, bars=bars)
+            trends = score_trends(trend_list, bars=bars)
+
             print(f"check_buy_zone_confirmation took {time.time() - buy_start:.1f}s")
             all_df = results2_entry["all"]
             elapsed = time.time() - start
@@ -121,7 +130,25 @@ def run_enrichment(num, runtype="all"):
                     header_bg="1F4E78",    
                     header_text="FFFFFF",   
                 )
-        
+
+                excel_writer.export_df_with_row_colors(
+                    df=dips,
+                    file_path="a"+csv_filename,
+                    target_col="rank",
+                    sheet_name="Sheet1",
+                    color_map=status_colors,
+                    header_bg="1F4E78",    
+                    header_text="FFFFFF",   
+                )
+                excel_writer.export_df_with_row_colors(
+                    df=trends,
+                    file_path="b"+csv_filename,
+                    target_col="rank",
+                    sheet_name="Sheet1",
+                    color_map=status_colors,
+                    header_bg="1F4E78",    
+                    header_text="FFFFFF",   
+                )
                 # --- Intraday entry timing ---
                 confirmed_df = results2_entry["confirmed"]
         
@@ -151,7 +178,7 @@ def run_enrichment(num, runtype="all"):
 
 #num = 0 small
 runtype = "all"
-#run_enrichment(3, runtype)
+run_enrichment(3, runtype)
 
-run_enrichment(0, runtype)
-run_enrichment(2, runtype)
+#run_enrichment(0, runtype)
+#run_enrichment(2, runtype)
