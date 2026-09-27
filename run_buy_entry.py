@@ -133,18 +133,18 @@ def run_enrichment(num, runtype="all"):
 
                  excel_writer.export_df_with_row_colors(
                     df=dips,
-                    file_path=csv_filename,
-                    target_col="Ticker",
-                    sheet_name="Sheet2",
+                    file_path="a"+csv_filename,
+                    target_col="rank",
+                    sheet_name="Sheet1",
                     color_map=status_colors,
                     header_bg="1F4E78",    
                     header_text="FFFFFF",   
                 )
                  excel_writer.export_df_with_row_colors(
                     df=trends,
-                    file_path=csv_filename,
-                    target_col="Ticker",
-                    sheet_name="Sheet3",
+                    file_path="b"+csv_filename,
+                    target_col="rank",
+                    sheet_name="Sheet1",
                     color_map=status_colors,
                     header_bg="1F4E78",    
                     header_text="FFFFFF",   
