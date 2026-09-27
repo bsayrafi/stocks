@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import os
+import time as time_mod
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -33,7 +34,8 @@ SESSION_END = time(16, 0)
 LAST_HOUR_START = time(15, 0)
 DEFAULT_LOOKBACK_DAYS = 180   # calendar days, ~120 sessions
 RVOL_SLOT_LOOKBACK = 20       # sessions used for time-of-day volume baseline
-Z_CLIP = 3.0
+Z_CLIP = 3.0          # cap applied to final (absolute or relative) z-scores
+Z_RAW_CAP = 10.0     # loose cap on raw z-scores, only to contain outliers
 
 
 # --------------------------------------------------------------------------
@@ -46,7 +48,15 @@ def get_client(api_key: str | None = None, secret_key: str | None = None):
     secret_key = secret_key or os.environ.get("APCA_API_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY")
     if not api_key or not secret_key:
         raise ValueError("Set APCA_API_KEY_ID / APCA_API_SECRET_KEY or pass a client.")
-    return StockHistoricalDataClient(api_key, secret_key)
+    # raw_data=True skips building a Python object per bar, which is very slow
+    # for large downloads; bars come back as plain dicts instead.
+    client = StockHistoricalDataClient(api_key, secret_key, raw_data=True)
+    # The free plan allows ~200 requests/minute. The library's default is 3
+    # retries 3 s apart, too short to wait out the limit; allow ~2 minutes.
+    for attr, val in (("_retry", 8), ("_retry_wait", 15)):
+        if hasattr(client, attr):
+            setattr(client, attr, val)
+    return client
 
 
 def _resolve_end(as_of) -> datetime:
@@ -66,19 +76,37 @@ def normalize_tickers(tickers) -> list[str]:
     return sorted({str(t).strip().upper() for t in tickers if t and str(t).strip()})
 
 
+_RAW_COLS = {"t": "timestamp", "o": "open", "h": "high", "l": "low", "c": "close",
+             "v": "volume", "n": "trade_count", "vw": "vwap"}
+
+
+def _bars_to_df(res) -> pd.DataFrame:
+    """Accept either raw data ({symbol: [bar dicts]}) or a BarSet."""
+    if isinstance(res, dict):
+        frames = []
+        for sym, rows in res.items():
+            if rows:
+                df = pd.DataFrame(rows).rename(columns=_RAW_COLS)
+                df["symbol"] = sym
+                frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return res.df.reset_index() if len(res.df) else pd.DataFrame()
+
+
 def fetch_intraday_bars(
     tickers,
     client=None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     as_of=None,
     feed: str = "sip",
+    chunk_size: int = 10,
+    verbose: bool | None = None,
 ) -> pd.DataFrame:
-    """Fetch 30-minute bars for all tickers in one request.
+    """Fetch 30-minute bars, `chunk_size` symbols per request, keeping only
+    regular-session bars.
 
     Fetch once for dips + trends combined and pass the result to both
-    score functions via `bars=` to avoid downloading twice. For backtests,
-    fetch a long range once and call the score functions with different
-    `as_of` dates.
+    score functions via `bars=` to avoid downloading twice.
     """
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.requests import StockBarsRequest
@@ -90,16 +118,40 @@ def fetch_intraday_bars(
     client = client or get_client()
     end = _resolve_end(as_of)
     start = end - timedelta(days=lookback_days)
-    req = StockBarsRequest(
-        symbol_or_symbols=tickers,
-        timeframe=TimeFrame(BAR_MINUTES, TimeFrameUnit.Minute),
-        start=start,
-        end=end,
-        adjustment=Adjustment.ALL,
-        feed=DataFeed(feed),
-    )
-    raw = client.get_stock_bars(req).df
-    return prepare_bars(raw)
+    if verbose is None:
+        verbose = len(tickers) > chunk_size or lookback_days > 365
+    frames, total = [], 0
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        req = StockBarsRequest(
+            symbol_or_symbols=chunk,
+            timeframe=TimeFrame(BAR_MINUTES, TimeFrameUnit.Minute),
+            start=start,
+            end=end,
+            adjustment=Adjustment.ALL,
+            feed=DataFeed(feed),
+        )
+        for attempt in range(4):
+            try:
+                res = client.get_stock_bars(req)
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if attempt < 3 and ("429" in msg or "too many" in msg or "rate limit" in msg):
+                    print("  Alpaca rate limit reached; pausing 60 s...", flush=True)
+                    time_mod.sleep(60)
+                    continue
+                raise
+        df = prepare_bars(_bars_to_df(res))
+        if len(df):
+            frames.append(df)
+            total += len(df)
+        if verbose:
+            print(f"  downloaded {min(i + chunk_size, len(tickers))}/{len(tickers)} symbols "
+                  f"({total:,} session bars)", flush=True)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True).sort_values(["symbol", "timestamp"]).reset_index(drop=True)
 
 
 def prepare_bars(raw: pd.DataFrame) -> pd.DataFrame:
@@ -121,6 +173,25 @@ def prepare_bars(raw: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # Feature engineering
 # --------------------------------------------------------------------------
+def quarterly_opex_dates(dates) -> set:
+    """Quarterly options expiration / index rebalance sessions: the third
+    Friday of Mar, Jun, Sep, Dec (or the last session before it if that
+    Friday is a market holiday). Volume on these days is inflated for
+    mechanical reasons, so it is excluded from volume-based measures."""
+    idx = pd.DatetimeIndex(sorted(set(pd.to_datetime(list(dates)))))
+    out = set()
+    if len(idx) == 0:
+        return out
+    for y in sorted(set(idx.year)):
+        for m in (3, 6, 9, 12):
+            first = pd.Timestamp(y, m, 1)
+            third_fri = pd.date_range(first, first + pd.Timedelta(days=31), freq="W-FRI")[2]
+            cands = idx[(idx <= third_fri) & (idx > third_fri - pd.Timedelta(days=5))]
+            if len(cands):
+                out.add(cands[-1])
+    return out
+
+
 def build_daily(bars_sym: pd.DataFrame) -> pd.DataFrame:
     """Aggregate one symbol's 30-min bars into a daily feature table.
 
@@ -140,10 +211,15 @@ def build_daily(bars_sym: pd.DataFrame) -> pd.DataFrame:
 
     # Time-of-day relative volume: each bar vs the median of the same slot
     # over previous sessions (removes the intraday U-shaped volume pattern).
-    b["slot_med"] = b.groupby("slot")["volume"].transform(
+    # Quarterly expiration days are excluded from the baseline and get no
+    # rvol, so they can't count as distribution days or inflate volume signals.
+    opex = quarterly_opex_dates(b["date"].unique())
+    b["opex"] = b["date"].isin(opex)
+    b["vol_base"] = b["volume"].where(~b["opex"])
+    b["slot_med"] = b.groupby("slot")["vol_base"].transform(
         lambda s: s.shift(1).rolling(RVOL_SLOT_LOOKBACK, min_periods=10).median()
     )
-    b["rvol_bar"] = b["volume"] / b["slot_med"].where(b["slot_med"] > 0)
+    b["rvol_bar"] = (b["volume"] / b["slot_med"].where(b["slot_med"] > 0)).where(~b["opex"])
 
     g = b.groupby("date")
     d = pd.DataFrame({
@@ -159,6 +235,7 @@ def build_daily(bars_sym: pd.DataFrame) -> pd.DataFrame:
         "dn_vol": g["dn_vol"].sum(),
         "rvol": g["rvol_bar"].mean(),
         "n_bars": g.size(),
+        "opex": g["opex"].first(),
     })
     lh = b[b["last_hour"]].groupby("date")
     d["lh_mfv"] = lh["mfv"].sum()
@@ -183,12 +260,19 @@ def build_daily(bars_sym: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
+def _cutoff(as_of):
+    if as_of is None:
+        return None
+    ts = pd.Timestamp(as_of)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(NY).tz_localize(None)
+    return ts.normalize()
+
+
 def daily_tables(bars: pd.DataFrame, tickers, as_of=None) -> tuple[dict, dict]:
     """Return ({ticker: daily_df}, {ticker: skip_reason})."""
     tables, skipped = {}, {}
-    cutoff = pd.Timestamp(as_of).tz_localize(None).normalize() if as_of is not None else None
-    if cutoff is not None and pd.Timestamp(as_of).tzinfo is not None:
-        cutoff = pd.Timestamp(as_of).tz_convert(NY).tz_localize(None).normalize()
+    cutoff = _cutoff(as_of)
     for t in normalize_tickers(tickers):
         sub = bars[bars["symbol"] == t] if len(bars) else bars
         if len(sub) == 0:
@@ -198,6 +282,31 @@ def daily_tables(bars: pd.DataFrame, tickers, as_of=None) -> tuple[dict, dict]:
         if cutoff is not None:
             d = d[d.index <= cutoff]
         tables[t] = d
+    return tables, skipped
+
+
+def build_all_daily(bars: pd.DataFrame) -> dict:
+    """{symbol: daily table} for every symbol in `bars`. Every feature uses
+    only past data, so these can be built once over a long period and sliced
+    by date (see get_tables) without lookahead. Used for backtesting."""
+    return {sym: build_daily(sub) for sym, sub in bars.groupby("symbol")}
+
+
+def get_tables(bars, symbols, as_of=None, daily: dict | None = None,
+               keep: int = 220) -> tuple[dict, dict]:
+    """Daily tables either built from `bars` or sliced from precomputed `daily`."""
+    if daily is None:
+        return daily_tables(bars, symbols, as_of=as_of)
+    cutoff = _cutoff(as_of)
+    tables, skipped = {}, {}
+    for s in normalize_tickers(symbols):
+        d = daily.get(s)
+        if d is None or len(d) == 0:
+            skipped[s] = "no data returned"
+            continue
+        if cutoff is not None:
+            d = d[d.index <= cutoff]
+        tables[s] = d.tail(keep)
     return tables, skipped
 
 
@@ -220,7 +329,9 @@ def series_z(rolled: pd.Series, window: int, baseline: int) -> float:
         scale = base.std(ddof=0)
     if not scale or scale < 1e-12:
         return 0.0
-    return float(np.clip((current - med) / scale, -Z_CLIP, Z_CLIP))
+    # Returned uncapped (except for extreme outliers) so that stock-minus-
+    # benchmark differences are not distorted; cap afterwards with clip_zs().
+    return float(np.clip((current - med) / scale, -Z_RAW_CAP, Z_RAW_CAP))
 
 
 def window_z(series: pd.Series, window: int, baseline: int) -> float:
@@ -258,6 +369,72 @@ def label(score_pct: float) -> str:
     if score_pct >= 40:
         return "Weak"
     return "None"
+
+
+# --------------------------------------------------------------------------
+# Benchmark (relative) scoring
+# --------------------------------------------------------------------------
+def ensure_symbols(bars: pd.DataFrame, symbols, client=None, as_of=None) -> pd.DataFrame:
+    """Fetch any symbols (e.g. benchmark ETFs) missing from `bars` and append them."""
+    have = set(bars["symbol"].unique()) if len(bars) else set()
+    missing = [s for s in normalize_tickers(symbols) if s not in have]
+    if not missing:
+        return bars
+    extra = fetch_intraday_bars(missing, client=client, as_of=as_of)
+    return pd.concat([bars, extra], ignore_index=True) if len(bars) else extra
+
+
+def clip_zs(zs: dict | None) -> dict | None:
+    if zs is None:
+        return None
+    return {k: (np.nan if pd.isna(v) else float(np.clip(v, -Z_CLIP, Z_CLIP))) for k, v in zs.items()}
+
+
+# Features where the ETF value is not comparable with a stock's. ETF trade
+# size is driven by market makers and creation/redemption activity, not by
+# directional buyers, so it isn't subtracted.
+NON_RELATIVE_FEATURES = ("trade_size_z",)
+
+
+def relative_zs(stock_zs: dict, bench_zs: dict | None, etf_vs_etf: bool = False) -> dict:
+    """Stock deviation from its own normal minus the benchmark's deviation
+    from its own normal, per feature. Clipped to +/-Z_CLIP.
+
+    For NON_RELATIVE_FEATURES the stock's own z-score is used as-is, or, when
+    comparing an ETF with SPY (etf_vs_etf=True), the feature is left out."""
+    if not bench_zs:
+        return {k: np.nan for k in stock_zs}
+    out = {}
+    for k, s in stock_zs.items():
+        if k in NON_RELATIVE_FEATURES:
+            out[k] = np.nan if (etf_vs_etf or pd.isna(s)) else float(np.clip(s, -Z_CLIP, Z_CLIP))
+            continue
+        b = bench_zs.get(k)
+        if pd.isna(s) or b is None or pd.isna(b):
+            out[k] = np.nan
+        else:
+            out[k] = float(np.clip(s - b, -Z_CLIP, Z_CLIP))
+    return out
+
+
+def to_score(prob: float) -> float:
+    return round(prob * 100, 1) if not pd.isna(prob) else np.nan
+
+
+def blend(abs_score: float, rel_score: float) -> float:
+    """Final ranking score: geometric mean of the stock's own accumulation
+    (abs_score) and its accumulation beyond its benchmark (rel_score).
+    Both must be high for a high result; a low value on either side drags it
+    down. Falls back to whichever score exists."""
+    if pd.isna(abs_score):
+        return rel_score
+    if pd.isna(rel_score):
+        return abs_score
+    return round(math.sqrt(abs_score * rel_score), 1)
+
+
+def round_zs(zs: dict, prefix: str = "") -> dict:
+    return {f"{prefix}{k}": (round(v, 2) if not pd.isna(v) else np.nan) for k, v in zs.items()}
 
 
 def finalize(rows: list[dict], skipped: dict) -> pd.DataFrame:

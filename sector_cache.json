@@ -1,0 +1,1016 @@
+{
+ "A": {
+  "company": "Agilent Technologies Inc",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AAOI": {
+  "company": "Applied Optoelectronics Inc",
+  "industry": "Communication Equipment",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AAPL": {
+  "company": "Apple Inc",
+  "industry": "Consumer Electronics",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ABNB": {
+  "company": "Airbnb Inc",
+  "industry": "Travel Services",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ACMR": {
+  "company": "ACM Research Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ADI": {
+  "company": "Analog Devices Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AER": {
+  "company": "Aercap Holdings NV",
+  "industry": "Rental & Leasing Services",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AIR": {
+  "company": "AAR Corp",
+  "industry": "Aerospace & Defense",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ALAB": {
+  "company": "Astera Labs Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AMAT": {
+  "company": "Applied Materials Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AMD": {
+  "company": "Advanced Micro Devices Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AME": {
+  "company": "Ametek Inc",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AMRX": {
+  "company": "Amneal Pharmaceuticals Inc",
+  "industry": "Drug Manufacturers - Specialty & Generic",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AMZN": {
+  "company": "Amazon.com Inc",
+  "industry": "Internet Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ANET": {
+  "company": "Arista Networks Inc",
+  "industry": "Computer Hardware",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "APH": {
+  "company": "Amphenol Corp",
+  "industry": "Electronic Components",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ARMK": {
+  "company": "Aramark",
+  "industry": "Specialty Business Services",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ARQT": {
+  "company": "Arcutis Biotherapeutics Inc",
+  "industry": "Biotechnology",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ATI": {
+  "company": "ATI Inc",
+  "industry": "Metal Fabrication",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "ATRO": {
+  "company": "Astronics Corp",
+  "industry": "Aerospace & Defense",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:14:17"
+ },
+ "AU": {
+  "company": "AngloGold Ashanti Plc",
+  "industry": "Gold",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "AVGO": {
+  "company": "Broadcom Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "AVNT": {
+  "company": "Avient Corp",
+  "industry": "Specialty Chemicals",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "AVPT": {
+  "company": "AvePoint Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "AXTA": {
+  "company": "Axalta Coating Systems Ltd",
+  "industry": "Specialty Chemicals",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "BE": {
+  "company": "Bloom Energy Corp",
+  "industry": "Electrical Equipment & Parts",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "BIIB": {
+  "company": "Biogen Inc",
+  "industry": "Drug Manufacturers - General",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "BTSG": {
+  "company": "BrightSpring Health Services Inc",
+  "industry": "Health Information Services",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "BWA": {
+  "company": "BorgWarner Inc",
+  "industry": "Auto Parts",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CART": {
+  "company": "Maplebear Inc",
+  "industry": "Internet Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CAT": {
+  "company": "Caterpillar Inc",
+  "industry": "Farm & Heavy Construction Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CDE": {
+  "company": "Coeur Mining Inc",
+  "industry": "Gold",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CDNA": {
+  "company": "Caredx Inc",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CDNS": {
+  "company": "Cadence Design Systems Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CDW": {
+  "company": "CDW Corp",
+  "industry": "Information Technology Services",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CGNX": {
+  "company": "Cognex Corp",
+  "industry": "Scientific & Technical Instruments",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CHRD": {
+  "company": "Chord Energy Corp",
+  "industry": "Oil & Gas E&P",
+  "sector": "Energy",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CIEN": {
+  "company": "CIENA Corp",
+  "industry": "Communication Equipment",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "COHR": {
+  "company": "Coherent Corp",
+  "industry": "Scientific & Technical Instruments",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "COP": {
+  "company": "Conoco Phillips",
+  "industry": "Oil & Gas E&P",
+  "sector": "Energy",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CORT": {
+  "company": "Corcept Therapeutics Inc",
+  "industry": "Biotechnology",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CRDO": {
+  "company": "Credo Technology Group Holding Ltd",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CRM": {
+  "company": "Salesforce Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CRWD": {
+  "company": "Crowdstrike Holdings Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CSCO": {
+  "company": "Cisco Systems Inc",
+  "industry": "Communication Equipment",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CTAS": {
+  "company": "Cintas Corp",
+  "industry": "Specialty Business Services",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CTVA": {
+  "company": "Corteva Inc",
+  "industry": "Agricultural Inputs",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CVLT": {
+  "company": "Commvault Systems Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "CVX": {
+  "company": "Chevron Corp",
+  "industry": "Oil & Gas Integrated",
+  "sector": "Energy",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DASH": {
+  "company": "DoorDash Inc",
+  "industry": "Internet Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DDOG": {
+  "company": "Datadog Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DELL": {
+  "company": "Dell Technologies Inc",
+  "industry": "Computer Hardware",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DGX": {
+  "company": "Quest Diagnostics Inc",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DHR": {
+  "company": "Danaher Corp",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DOCN": {
+  "company": "DigitalOcean Holdings Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "DT": {
+  "company": "Dynatrace Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "ECL": {
+  "company": "Ecolab Inc",
+  "industry": "Specialty Chemicals",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "EMR": {
+  "company": "Emerson Electric Co",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "ENTG": {
+  "company": "Entegris Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "EOG": {
+  "company": "EOG Resources Inc",
+  "industry": "Oil & Gas E&P",
+  "sector": "Energy",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "ESTC": {
+  "company": "Elastic N.V",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "ETSY": {
+  "company": "Etsy Inc",
+  "industry": "Internet Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "EXEL": {
+  "company": "Exelixis Inc",
+  "industry": "Biotechnology",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "EXLS": {
+  "company": "ExlService Holdings Inc",
+  "industry": "Information Technology Services",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "EXPE": {
+  "company": "Expedia Group Inc",
+  "industry": "Travel Services",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FCX": {
+  "company": "Freeport-McMoRan Inc",
+  "industry": "Copper",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FIGS": {
+  "company": "Figs Inc",
+  "industry": "Apparel Manufacturing",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FIVE": {
+  "company": "Five Below Inc",
+  "industry": "Specialty Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FIVN": {
+  "company": "Five9 Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FLS": {
+  "company": "Flowserve Corp",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FLYW": {
+  "company": "Flywire Corp",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FORM": {
+  "company": "FormFactor Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FRSH": {
+  "company": "Freshworks Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "FTI": {
+  "company": "TechnipFMC plc",
+  "industry": "Oil & Gas Equipment & Services",
+  "sector": "Energy",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "GEV": {
+  "company": "GE Vernova Inc",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "GLW": {
+  "company": "Corning Inc",
+  "industry": "Electronic Components",
+  "sector": "Technology",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "GOOG": {
+  "company": "Alphabet Inc",
+  "industry": "Internet Content & Information",
+  "sector": "Communication Services",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "GOOGL": {
+  "company": "Alphabet Inc",
+  "industry": "Internet Content & Information",
+  "sector": "Communication Services",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "GTES": {
+  "company": "Gates Industrial Corp Ltd",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T11:31:58"
+ },
+ "HALO": {
+  "company": "Halozyme Therapeutics Inc",
+  "industry": "Biotechnology",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "HQY": {
+  "company": "Healthequity Inc",
+  "industry": "Health Information Services",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "INGM": {
+  "company": "Ingram Micro Holding Corp",
+  "industry": "Information Technology Services",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "INOD": {
+  "company": "Innodata Inc",
+  "industry": "Information Technology Services",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "INSW": {
+  "company": "International Seaways Inc",
+  "industry": "Oil & Gas Midstream",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "INTC": {
+  "company": "Intel Corp",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "IOT": {
+  "company": "Samsara Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "IREN": {
+  "company": "IREN Ltd",
+  "industry": "Capital Markets",
+  "sector": "Financial",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "KEYS": {
+  "company": "Keysight Technologies Inc",
+  "industry": "Scientific & Technical Instruments",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "KLAC": {
+  "company": "KLA Corp",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "KO": {
+  "company": "Coca-Cola Co",
+  "industry": "Beverages - Non-Alcoholic",
+  "sector": "Consumer Defensive",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "LECO": {
+  "company": "Lincoln Electric Holdings Inc",
+  "industry": "Tools & Accessories",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "LITE": {
+  "company": "Lumentum Holdings Inc",
+  "industry": "Communication Equipment",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "LLY": {
+  "company": "Lilly(Eli) & Co",
+  "industry": "Drug Manufacturers - General",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "LRCX": {
+  "company": "Lam Research Corp",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MANH": {
+  "company": "Manhattan Associates Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MDB": {
+  "company": "MongoDB Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "META": {
+  "company": "Meta Platforms Inc",
+  "industry": "Internet Content & Information",
+  "sector": "Communication Services",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MNST": {
+  "company": "Monster Beverage Corp",
+  "industry": "Beverages - Non-Alcoholic",
+  "sector": "Consumer Defensive",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MPC": {
+  "company": "Marathon Petroleum Corp",
+  "industry": "Oil & Gas Refining & Marketing",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MRK": {
+  "company": "Merck & Co Inc",
+  "industry": "Drug Manufacturers - General",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MRVL": {
+  "company": "Marvell Technology Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MSFT": {
+  "company": "Microsoft Corp",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MTCH": {
+  "company": "Match Group Inc",
+  "industry": "Internet Content & Information",
+  "sector": "Communication Services",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MTSI": {
+  "company": "MACOM Technology Solutions Holdings Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "MU": {
+  "company": "Micron Technology Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NBIS": {
+  "company": "Nebius Group NV",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NEM": {
+  "company": "Newmont Corp",
+  "industry": "Gold",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NESR": {
+  "company": "National Energy Services Reunited Corp",
+  "industry": "Oil & Gas Equipment & Services",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NOW": {
+  "company": "ServiceNow Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NTAP": {
+  "company": "Netapp Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NVDA": {
+  "company": "NVIDIA Corp",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NWS": {
+  "company": "News Corp",
+  "industry": "Entertainment",
+  "sector": "Communication Services",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "NWSA": {
+  "company": "News Corp",
+  "industry": "Entertainment",
+  "sector": "Communication Services",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "OKTA": {
+  "company": "Okta Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "ONTO": {
+  "company": "Onto Innovation Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "ORCL": {
+  "company": "Oracle Corp",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "P": {
+  "company": "Everpure Inc",
+  "industry": "Computer Hardware",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PAA": {
+  "company": "Plains All American Pipeline LP",
+  "industry": "Oil & Gas Midstream",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PANW": {
+  "company": "Palo Alto Networks Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PARR": {
+  "company": "Par Pacific Holdings Inc",
+  "industry": "Oil & Gas Refining & Marketing",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PAY": {
+  "company": "Paymentus Holdings Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PCTY": {
+  "company": "Paylocity Holding Corp",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PDFS": {
+  "company": "PDF Solutions Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PH": {
+  "company": "Parker-Hannifin Corp",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PLTR": {
+  "company": "Palantir Technologies Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PR": {
+  "company": "Permian Resources Holdings Inc",
+  "industry": "Oil & Gas E&P",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "PSX": {
+  "company": "Phillips 66",
+  "industry": "Oil & Gas Refining & Marketing",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "Q": {
+  "company": "Qnity Electronics Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "QCOM": {
+  "company": "Qualcomm Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "REGN": {
+  "company": "Regeneron Pharmaceuticals Inc",
+  "industry": "Biotechnology",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "RGLD": {
+  "company": "Royal Gold Inc",
+  "industry": "Gold",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "RKLB": {
+  "company": "Rocket Lab Corp",
+  "industry": "Aerospace & Defense",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "ROK": {
+  "company": "Rockwell Automation Inc",
+  "industry": "Specialty Industrial Machinery",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "ROST": {
+  "company": "Ross Stores Inc",
+  "industry": "Apparel Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "SANM": {
+  "company": "Sanmina Corp",
+  "industry": "Electronic Components",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "SCHW": {
+  "company": "Charles Schwab Corp",
+  "industry": "Capital Markets",
+  "sector": "Financial",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "SHC": {
+  "company": "Sotera Health Co",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "SITM": {
+  "company": "SiTime Corp",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:04:59"
+ },
+ "SKHY": {
+  "company": "SK Hynix Inc ADR",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SLB": {
+  "company": "SLB Ltd",
+  "industry": "Oil & Gas Equipment & Services",
+  "sector": "Energy",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SMTC": {
+  "company": "Semtech Corp",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SNDK": {
+  "company": "Sandisk Corp",
+  "industry": "Computer Hardware",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SNX": {
+  "company": "TD Synnex Corp",
+  "industry": "Electronics & Computer Distribution",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SOFI": {
+  "company": "SoFi Technologies Inc",
+  "industry": "Credit Services",
+  "sector": "Financial",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SPCX": {
+  "company": "Space Exploration Technologies Corp",
+  "industry": "Aerospace & Defense",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "SSRM": {
+  "company": "SSR Mining Inc",
+  "industry": "Gold",
+  "sector": "Basic Materials",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TER": {
+  "company": "Teradyne Inc",
+  "industry": "Semiconductor Equipment & Materials",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TKR": {
+  "company": "Timken Co",
+  "industry": "Tools & Accessories",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TMO": {
+  "company": "Thermo Fisher Scientific Inc",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TOST": {
+  "company": "Toast Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TSLA": {
+  "company": "Tesla Inc",
+  "industry": "Auto Manufacturers",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TSM": {
+  "company": "Taiwan Semiconductor Manufacturing ADR",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TTC": {
+  "company": "Toro Co",
+  "industry": "Tools & Accessories",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TTEK": {
+  "company": "Tetra Tech Inc",
+  "industry": "Engineering & Construction",
+  "sector": "Industrials",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TWLO": {
+  "company": "Twilio Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "TXN": {
+  "company": "Texas Instruments Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "UBER": {
+  "company": "Uber Technologies Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "VCYT": {
+  "company": "Veracyte Inc",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "VEEV": {
+  "company": "Veeva Systems Inc",
+  "industry": "Health Information Services",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "VSH": {
+  "company": "Vishay Intertechnology Inc",
+  "industry": "Semiconductors",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "VST": {
+  "company": "Vistra Corp",
+  "industry": "Utilities - Independent Power Producers",
+  "sector": "Utilities",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "WAT": {
+  "company": "Waters Corp",
+  "industry": "Diagnostics & Research",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "WAY": {
+  "company": "Waystar Holding Corp",
+  "industry": "Health Information Services",
+  "sector": "Healthcare",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "WDAY": {
+  "company": "Workday Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "WK": {
+  "company": "Workiva Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "WSM": {
+  "company": "Williams-Sonoma Inc",
+  "industry": "Specialty Retail",
+  "sector": "Consumer Cyclical",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "XYZ": {
+  "company": "Block Inc",
+  "industry": "Software - Infrastructure",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "ZBRA": {
+  "company": "Zebra Technologies Corp",
+  "industry": "Communication Equipment",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ },
+ "ZM": {
+  "company": "Zoom Communications Inc",
+  "industry": "Software - Application",
+  "sector": "Technology",
+  "updated": "2026-09-27T12:05:00"
+ }
+}

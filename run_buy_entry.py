@@ -10,6 +10,7 @@ if WORK_DIR not in sys.path:
     sys.path.insert(0, WORK_DIR)
 
 # Import local modules (Ensure these files are uploaded to your GitHub repo!)
+from benchmarks import benchmark_symbols, get_benchmark_map
 import constants
 import indicators
 import tickers
@@ -97,10 +98,14 @@ def run_enrichment(num, runtype="all"):
             enrich_html.main(enrichment_tickers, fileapp)
 
             buy_start = time.time()
-            #results2_entry = check_buy_zone_confirmation(enrichment_tickers)
-            bars = fetch_intraday_bars(dip_list + trend_list)   # one download for both
-            dips = score_dips(dip_list, bars=bars)
-            trends = score_trends(trend_list, bars=bars)
+            results2_entry = check_buy_zone_confirmation(enrichment_tickers)
+
+            bench_map = get_benchmark_map(enrichment_tickers)
+
+            bars = fetch_intraday_bars(enrichment_tickers + benchmark_symbols(bench_map))
+
+            dips = score_dips(enrichment_tickers, bars=bars, benchmarks=bench_map)
+            trends = score_trends(enrichment_tickers, bars=bars, benchmarks=bench_map)
 
             print(f"check_buy_zone_confirmation took {time.time() - buy_start:.1f}s")
             all_df = results2_entry["all"]
@@ -133,7 +138,7 @@ def run_enrichment(num, runtype="all"):
 
                 excel_writer.export_df_with_row_colors(
                     df=dips,
-                    file_path="a"+csv_filename,
+                    file_path=csv_filename.replace(".xlsx", "_dips.xlsx"),
                     target_col="rank",
                     sheet_name="Sheet1",
                     color_map=status_colors,
@@ -142,7 +147,7 @@ def run_enrichment(num, runtype="all"):
                 )
                 excel_writer.export_df_with_row_colors(
                     df=trends,
-                    file_path="b"+csv_filename,
+                    file_path=csv_filename.replace(".xlsx", "_trends.xlsx"),
                     target_col="rank",
                     sheet_name="Sheet1",
                     color_map=status_colors,
@@ -178,7 +183,7 @@ def run_enrichment(num, runtype="all"):
 
 #num = 0 small
 runtype = "all"
-run_enrichment(3, runtype)
+#run_enrichment(3, runtype)
 
-#run_enrichment(0, runtype)
-#run_enrichment(2, runtype)
+run_enrichment(0, runtype)
+run_enrichment(2, runtype)

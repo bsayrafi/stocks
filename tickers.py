@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from finvizfinance.screener.overview import Overview
 from constants import *
+from benchmarks import build_benchmark_map
 
 
 
@@ -74,5 +75,4 @@ def fetch_tickers(my_filters):
 
     print(f"Total Tickers ({len(tickers)}):")
     #print(tickers)
-
     return tickers
