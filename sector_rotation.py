@@ -10,6 +10,7 @@ Usage:
     find_sector_rotation()                                   # 11 GICS sectors vs SPY
     find_sector_rotation(universe="industries")              # ~30 industry ETFs vs SPY
     find_sector_rotation(universe="tech", benchmark="XLK")   # inside tech: semis vs software vs AI...
+    find_sector_rotation(universe="sectors+tech")            # 11 sectors + tech breakdown, vs SPY
 
     # Your own themes as equal-weight baskets (best way to isolate "AI"):
     find_sector_rotation(
@@ -60,6 +61,9 @@ UNIVERSES = {
     "sectors": SECTOR_ETFS,
     "tech": TECH_SUBSECTORS,
     "industries": INDUSTRY_ETFS,
+    # 11 sectors AND the tech breakdown in one table (XLK sits next to its own sub-industries;
+    # use benchmark="SPY" so every line means the same thing)
+    "sectors+tech": {**SECTOR_ETFS, **TECH_SUBSECTORS},
 }
 
 
@@ -107,6 +111,7 @@ def find_sector_rotation(
     lookback_days: int = 60,
     short_days: int = 20,
     top_n: int = 3,
+    price_confirmed_flow: bool = True,
     prices: pd.DataFrame = None,
     volumes: pd.DataFrame = None,
     verbose: bool = True,
@@ -116,21 +121,26 @@ def find_sector_rotation(
 
     Parameters
     ----------
-    universe : "sectors" | "tech" | "industries" | dict {ticker: name} | list of tickers
+    universe : "sectors" | "tech" | "industries" | "sectors+tech" | dict {ticker: name} | list of tickers
     benchmark : ticker to measure against. Use a parent (e.g. "XLK") to see
                 rotation *within* that sector rather than vs the whole market.
     baskets : optional {name: [tickers]} equal-weight custom themes (e.g. AI).
               They are ranked alongside the universe.
     lookback_days / short_days : baseline and "recent" windows in trading days
     top_n : how many top/bottom groups to print
+    price_confirmed_flow : if True (default), the volume/flow signal only counts when price
+                agrees. A volume surge while the group is underperforming the benchmark is
+                treated as distribution (negative), and a volume drop while it is
+                outperforming is treated as neutral, not negative. If False, the raw
+                flow_proxy is ranked directly (older behavior).
     prices, volumes : optional DataFrames (columns = tickers, incl. benchmark and
                       basket members) to skip the download
 
     Returns
     -------
     DataFrame indexed by ticker/basket name, sorted by score (best first).
-    Columns: name, rel_ret_long, rel_ret_short, rs_ratio, rs_momentum,
-             flow_proxy, quadrant, score
+    Columns: name, group (Sector/Tech/Industry/Basket), rel_ret_long, rel_ret_short, rs_ratio, rs_momentum,
+             flow_proxy, flow_adj, quadrant, score
     """
     names = _resolve_universe(universe)
     names.pop(benchmark, None)              # don't rank the benchmark against itself
@@ -195,7 +205,19 @@ def find_sector_rotation(
         "flow_proxy": flow[cols],
     })
     df["quadrant"] = [_quadrant(r, m) for r, m in zip(df["rs_ratio"], df["rs_momentum"])]
-    df["score"] = df[["rel_ret_short", "rs_momentum", "flow_proxy"]].rank(pct=True).mean(axis=1)
+    df.insert(1, "group", [
+        "Basket" if t in baskets else "Sector" if t in SECTOR_ETFS else "Tech"
+        if t in TECH_SUBSECTORS else "Industry" if t in INDUSTRY_ETFS else "Custom"
+        for t in df.index
+    ])
+    if price_confirmed_flow:
+        surge_pos = df["flow_proxy"].clip(lower=0)
+        # price agrees (outperforming): a surge adds, no surge is neutral
+        # price disagrees (underperforming): a surge is distribution -> negative
+        df["flow_adj"] = surge_pos.where(df["rel_ret_short"] > 0, -surge_pos)
+    else:
+        df["flow_adj"] = df["flow_proxy"]
+    df["score"] = df[["rel_ret_short", "rs_momentum", "flow_adj"]].rank(pct=True).mean(axis=1)
     df = df.sort_values("score", ascending=False)
 
     if verbose:
@@ -203,11 +225,14 @@ def find_sector_rotation(
         def show(title, rows):
             print(title)
             for tkr, r in rows.iterrows():
-                print(f"  {tkr:12} {r['name']:26} {r['quadrant']:10} score={r['score']:.2f}  "
+                print(f"  {tkr:12} {r['name']:26} {r['group']:8} {r['quadrant']:10} score={r['score']:.2f}  "
                       f"rel_ret_short={r['rel_ret_short']:+.1%}  flow={r['flow_proxy']:+.1%}")
-        show(f"Top {top_n} - money rotating INTO:", df.head(top_n))
+        show(f"Top {top_n} by rotation score:", df.head(top_n))
         print()
-        show(f"Bottom {top_n} - money rotating OUT:", df.tail(top_n).iloc[::-1])
+        show(f"Bottom {top_n} by rotation score:", df.tail(top_n).iloc[::-1])
+        inn = df[df["quadrant"].isin(["Leading", "Improving"])]
+        print("\nLeading / Improving (actual rotation-in candidates): "
+              + (", ".join(f"{t} ({q})" for t, q in inn["quadrant"].items()) or "none"))
 
     return df
 
@@ -215,4 +240,4 @@ def find_sector_rotation(
 if __name__ == "__main__":
     pd.set_option("display.float_format", lambda v: f"{v:.3f}")
     pd.set_option("display.width", 200)
-    print(find_sector_rotation(universe="sectors", benchmark="SPY"))
+    print(find_sector_rotation(universe="tech", benchmark="XLK"))

@@ -16,6 +16,8 @@ Usage:
     res["table"]                                          # ranked by rotation score
     res["factors"]                                        # what oil / yields are doing
 
+    scan_market(universe="sectors+tech")                 # sectors + tech breakdown, vs SPY
+
     scan_market(universe="tech", benchmark="XLK",
                 baskets={"AI compute": ["NVDA", "AVGO", "AMD", "TSM"],
                          "AI apps":    ["MSFT", "PLTR", "CRM", "NOW"]})
@@ -55,6 +57,7 @@ def scan_market(
     macro_long_window: int = 250,
     macro_short_days: int = 5,
     top_n: int = 3,
+    price_confirmed_flow: bool = True,
     prices: pd.DataFrame = None,
     volumes: pd.DataFrame = None,
     factor_data: pd.DataFrame = None,
@@ -65,7 +68,7 @@ def scan_market(
 
     Table columns:
       rotation columns   name, rel_ret_long, rel_ret_short, rs_ratio, rs_momentum,
-                         flow_proxy, quadrant, rotation_score  (sorted by rotation_score)
+                         flow_proxy, flow_adj, quadrant, rotation_score  (sorted by rotation_score)
       per factor f       f_corr, f_tilt, f_signal
       regime_shift       factors whose recent correlation flipped sign vs the long window
 
@@ -96,6 +99,7 @@ def scan_market(
     rot = find_sector_rotation(
         universe=names, benchmark=benchmark, baskets=baskets,
         lookback_days=lookback_days, short_days=short_days,
+        price_confirmed_flow=price_confirmed_flow,
         prices=prices, volumes=volumes, verbose=False,
     ).rename(columns={"score": "rotation_score"})
 
@@ -149,7 +153,7 @@ def scan_market(
             for t, r in rows.iterrows():
                 tilts = "  ".join(f"{f}:{r[f'{f}_tilt']:+.2f}" for f in factors)
                 flip = "  [macro relationship flipped]" if r["regime_shift"] else ""
-                print(f"  {t:12} {r['name']:24} {r['quadrant']:10} "
+                print(f"  {t:12} {r['name']:24} {r['group']:8} {r['quadrant']:10} "
                       f"rot={r['rotation_score']:.2f}  tilt {tilts}{flip}")
 
         print()
