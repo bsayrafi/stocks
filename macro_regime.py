@@ -53,6 +53,7 @@ def find_macro_impact(
     prices: pd.DataFrame = None,
     factor_data: pd.DataFrame = None,
     sort_by: str = None,
+    relative: bool = True,
     top_n: int = 3,
     verbose: bool = True,
 ) -> dict:
@@ -83,6 +84,12 @@ def find_macro_impact(
       regime_shift factors whose recent correlation has flipped sign vs the long window
 
     sort_by : factor name whose tilt orders the sensitivity table (default: first factor).
+    relative : if True (default), each group's returns are measured RELATIVE to the benchmark
+               before correlating with the factors. This removes the market-wide effect
+               (e.g. rising yields hitting every sector) so corr/beta/tilt show what is
+               specific to each group: positive = the group tends to outperform the
+               benchmark when the factor rises. The benchmark row itself always uses
+               its absolute returns, so it shows how the market reacts.
     """
     factors = factors or DEFAULT_FACTORS
     names = _resolve_universe(universe)
@@ -113,6 +120,10 @@ def find_macro_impact(
             lvl[f], chg[f] = s, s.pct_change() * 100
     rets = data[etfs].pct_change() * 100
     rets, chg, lvl = rets.iloc[1:], chg.iloc[1:], lvl.iloc[1:]
+    if relative:
+        bench_ret = rets[benchmark].copy()
+        rets = rets.sub(bench_ret, axis=0)
+        rets[benchmark] = bench_ret          # benchmark row stays absolute
 
     # --- what are the factors doing now? ---
     rows, z_now = [], {}

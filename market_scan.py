@@ -26,6 +26,9 @@ Requires: pip install yfinance pandas numpy
 (sector_rotation.py and macro_regime.py must be in the same folder.)
 """
 
+import os
+from datetime import date
+
 import pandas as pd
 
 from sector_rotation import (
@@ -58,6 +61,9 @@ def scan_market(
     macro_short_days: int = 5,
     top_n: int = 3,
     price_confirmed_flow: bool = True,
+    macro_relative: bool = True,
+    save_csv: bool = True,
+    output_dir: str = "data",
     prices: pd.DataFrame = None,
     volumes: pd.DataFrame = None,
     factor_data: pd.DataFrame = None,
@@ -79,7 +85,14 @@ def scan_market(
       Weak            neither
       Factor flat     the factor isn't moving, so no tailwind/headwind call is made
 
-    Returns {"table": DataFrame, "factors": DataFrame}
+    macro_relative : measure each group's factor reaction relative to the benchmark (default),
+                     so tilt shows what is specific to the group, not the market-wide effect.
+    save_csv / output_dir : write the table and factor status as CSV files into a `data`
+                     subfolder (created if missing). A relative output_dir is resolved next
+                     to this script. Files are named with the scan date, e.g.
+                     data/market_scan_sectors+tech_2026-09-28.csv
+
+    Returns {"table": DataFrame, "factors": DataFrame, "csv_path": str or None}
     """
     names = _resolve_universe(universe)
     names.pop(benchmark, None)
@@ -120,6 +133,7 @@ def scan_market(
     macro = find_macro_impact(
         factors=factors, universe=macro_names, benchmark=benchmark,
         window=macro_window, long_window=macro_long_window, short_days=macro_short_days,
+        relative=macro_relative,
         prices=macro_prices, factor_data=factor_data, verbose=False,
     )
     sens = macro["sensitivity"].drop(benchmark)
@@ -169,7 +183,24 @@ def scan_market(
             print(f"\n[{f}] rotating in + tailwind: {', '.join(inn) or 'none'}")
             print(f"[{f}] rotating in, headwind:  {', '.join(fragile) or 'none'}")
 
-    return {"table": df, "factors": macro["factors"]}
+    csv_path = None
+    if save_csv:
+        out_dir = output_dir if os.path.isabs(output_dir) else os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), output_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        label = universe if isinstance(universe, str) else "custom"
+        stamp = date.today().isoformat()
+        csv_path = os.path.join(out_dir, f"market_scan_{label}_{stamp}.csv")
+        out = df.copy()
+        out.insert(0, "scan_date", stamp)
+        out.insert(1, "benchmark", benchmark)
+        out.round(4).to_csv(csv_path, index_label="ticker")
+        macro["factors"].round(4).to_csv(
+            os.path.join(out_dir, f"macro_factors_{stamp}.csv"), index_label="factor")
+        if verbose:
+            print(f"\nSaved: {csv_path}")
+
+    return {"table": df, "factors": macro["factors"], "csv_path": csv_path}
 
 
 if __name__ == "__main__":

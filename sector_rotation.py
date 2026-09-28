@@ -214,7 +214,7 @@ def find_sector_rotation(
         surge_pos = df["flow_proxy"].clip(lower=0)
         # price agrees (outperforming): a surge adds, no surge is neutral
         # price disagrees (underperforming): a surge is distribution -> negative
-        df["flow_adj"] = surge_pos.where(df["rel_ret_short"] > 0, -surge_pos)
+        df["flow_adj"] = surge_pos.where(df["rel_ret_short"] > 0, -surge_pos) + 0.0  # +0.0 avoids -0.0
     else:
         df["flow_adj"] = df["flow_proxy"]
     df["score"] = df[["rel_ret_short", "rs_momentum", "flow_adj"]].rank(pct=True).mean(axis=1)
@@ -240,16 +240,4 @@ def find_sector_rotation(
 if __name__ == "__main__":
     pd.set_option("display.float_format", lambda v: f"{v:.3f}")
     pd.set_option("display.width", 200)
-    print(find_sector_rotation(universe="sectors+tech"))                  # 11 sectors + 9 tech groups, vs SPY
-    
-    
-    from market_scan import scan_market
-    res = scan_market(universe="sectors+tech")
-    print(res["table"])
-
-       
-    # with your AI baskets in the same table
-    print(find_sector_rotation(universe="sectors+tech",
-                     baskets={"AI compute": ["NVDA", "AVGO", "AMD", "TSM"],
-                              "AI apps":    ["MSFT", "PLTR", "CRM", "NOW"]}))
-
+    print(find_sector_rotation(universe="tech", benchmark="XLK"))
