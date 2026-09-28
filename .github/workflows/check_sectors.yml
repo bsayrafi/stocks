@@ -53,7 +53,7 @@ jobs:
   
 
       # Step 4: Run your cleaned Python script
-      - name: Run Screener Script
+      - name: Run Check Sectors script
         env:
           # Injects the secret we created earlier!
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
