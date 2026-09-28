@@ -1993,6 +1993,8 @@ def render_daily_chart_svg(report: dict) -> str:
         levels.append((f"T {tgt['r']:g}R", tgt["price"], "lvl-target"))
     for k, lvl in enumerate((dsr.get("supports") or [])[:2]):
         levels.append((f"S{k + 1} x{lvl['touches']}", lvl["price"], "lvl-support" if k == 0 else "lvl-support2"))
+    if report.get("pre_market") is not None:   # same yellow dotted line as on the 1h chart
+        levels.append(("Pre-mkt", report["pre_market"], "lvl-premkt"))
     levels += [
               ("Stop", report.get("stop"), "lvl-stop")]
     levels = [(lbl, float(v), cls) for lbl, v, cls in levels if v is not None and pd.notna(v)]
@@ -2121,7 +2123,7 @@ def render_daily_chart_svg(report: dict) -> str:
           <span class="badge {'pass' if chg >= 0 else 'fail'}">{chg:+.2f}%</span>
           <span class="legend">{' '.join(legend)}
             <i class="sw lvl-support"></i>Support S1/S2 <i class="sw lvl-target"></i>Target T1/T2
-            <i class="sw lvl-stop"></i>Stop
+            <i class="sw lvl-stop"></i>Stop{' <i class="sw premkt-sw"></i>Pre-market' if report.get("pre_market") is not None else ""}
             <span class="hhhl-mark up">&#9650;</span>HH+HL <span class="hhhl-mark down">&#9660;</span>LH+LL</span>
         </div>
         <svg class="price-chart" viewBox="0 0 {W} {H}"

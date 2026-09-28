@@ -1,0 +1,19 @@
+ticker,scan_date,benchmark,rank,name,group,theme,rel_ret_long,rel_ret_short,rs_ratio,rs_momentum,flow_proxy,quadrant,flow_adj,rotation_score,avg_dollar_volume,regime_shift,oil_corr,oil_tilt,y10_corr,y10_tilt,oil_signal,y10_signal
+AI compute,2026-09-28,SPY,1,Basket (4 stocks),Basket,AI compute,0.0399,0.0704,105.6109,107.8868,0.0074,Leading,0.0074,0.9815,56537577641.125,,-0.1056,-0.0096,0.0319,0.0637,Factor flat,In + tailwind
+SMH,2026-09-28,SPY,2,Semiconductors (VanEck),Tech,Semiconductors,-0.0593,0.0558,104.4721,110.1132,-0.3626,Leading,0.0,0.8889,5836380034.0484,,-0.1583,-0.0144,0.0065,0.013,Factor flat,In + tailwind
+AIQ,2026-09-28,SPY,3,AI & Big Data,Tech,AI,-0.0001,0.0193,103.6383,103.282,-0.5364,Leading,0.0,0.8333,124238806.8568,,-0.2479,-0.0225,-0.1965,-0.3931,Factor flat,"In, headwind"
+XLC,2026-09-28,SPY,4,Communication Services,Sector,Communication Services,-0.0041,0.0144,100.0275,101.6181,-0.0661,Leading,0.0,0.7963,658563292.9888,,-0.085,-0.0077,-0.1292,-0.2583,Factor flat,"In, headwind"
+XLV,2026-09-28,SPY,5,Health Care,Sector,Health Care,0.0372,-0.0041,100.9953,97.488,-0.0996,Weakening,0.0,0.6852,1535259415.6375,,0.2414,0.0219,0.0032,0.0064,Factor flat,Tailwind only
+FDN,2026-09-28,SPY,6,Internet,Tech,Internet,0.0448,-0.0104,101.4341,97.1941,-0.4088,Weakening,0.0,0.6296,76109353.9266,,-0.2037,-0.0185,-0.3096,-0.6192,Factor flat,Weak
+XLP,2026-09-28,SPY,7,Consumer Staples,Sector,Consumer Staples,-0.0453,-0.032,95.824,97.8324,0.0159,Lagging,-0.0159,0.5556,911043788.3022,,0.1261,0.0115,0.0676,0.1352,Factor flat,Tailwind only
+XLY,2026-09-28,SPY,8,Consumer Discretionary,Sector,Consumer Discretionary,-0.0986,-0.0466,94.5268,97.2305,-0.0674,Lagging,0.0,0.5556,812020268.8879,,-0.2594,-0.0236,-0.174,-0.3479,Factor flat,Weak
+SKYY,2026-09-28,SPY,9,Cloud Computing,Tech,Cloud,0.1713,-0.0143,105.9716,93.5891,-0.068,Weakening,0.0,0.463,44565906.3326,,-0.2002,-0.0182,-0.2833,-0.5666,Factor flat,Weak
+AI apps,2026-09-28,SPY,11,Basket (4 stocks),Basket,AI apps,0.3796,-0.0135,113.05,88.6503,-0.0949,Weakening,0.0,0.4444,25483651524.3444,,-0.1502,-0.0137,-0.1502,-0.3005,Factor flat,Weak
+CIBR,2026-09-28,SPY,10,Cybersecurity,Tech,Cybersecurity,0.0712,-0.0012,103.8751,96.588,0.3278,Weakening,-0.3278,0.4444,150726217.5863,,-0.0067,-0.0006,-0.118,-0.2361,Factor flat,Weak
+XLE,2026-09-28,SPY,12,Energy,Sector,Energy,0.1449,-0.0009,101.0199,96.2097,0.3858,Weakening,-0.3858,0.4259,1832466241.8157,,0.7524,0.0684,0.526,1.052,Factor flat,Tailwind only
+IGV,2026-09-28,SPY,13,Software,Tech,Software,0.0989,-0.0419,104.16,92.3388,-0.1947,Weakening,0.0,0.4074,1306733319.8089,,-0.1738,-0.0158,-0.2466,-0.4931,Factor flat,Weak
+XLI,2026-09-28,SPY,14,Industrials,Sector,Industrials,-0.1049,-0.0471,94.0131,97.5393,0.2097,Lagging,-0.2097,0.4074,1270884837.2365,,-0.0562,-0.0051,0.1751,0.3502,Factor flat,Tailwind only
+XLRE,2026-09-28,SPY,15,Real Estate,Sector,Real Estate,-0.0883,-0.0644,92.7121,95.3951,0.1652,Lagging,-0.1652,0.2778,230006684.8442,,0.2229,0.0203,-0.0382,-0.0764,Factor flat,Weak
+XLB,2026-09-28,SPY,16,Materials,Sector,Materials,-0.0563,-0.0629,95.2811,94.7656,0.154,Lagging,-0.154,0.2778,576697568.011,,-0.0555,-0.005,-0.1298,-0.2595,Factor flat,Weak
+XLF,2026-09-28,SPY,17,Financials,Sector,Financials,-0.0322,-0.052,95.0643,93.8601,0.1892,Lagging,-0.1892,0.2407,1874234077.3135,,0.0887,0.0081,0.0283,0.0566,Factor flat,Tailwind only
+XLU,2026-09-28,SPY,18,Utilities,Sector,Utilities,-0.1479,-0.0811,89.5271,94.8993,0.2728,Lagging,-0.2728,0.1852,888559959.8438,,0.4125,0.0375,0.0725,0.1451,Factor flat,Tailwind only

@@ -1,0 +1,3 @@
+factor,ticker,level,chg_5d,chg_60d,unit,z_score,state
+oil,CL=F,96.28,0.522,40.166,%,0.0909,Flat
+y10,^TNX,5.184,22.1,69.9,bps,2.4346,Rising
