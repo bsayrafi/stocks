@@ -24,7 +24,6 @@ Requires: pip install yfinance pandas numpy
 
 import numpy as np
 import pandas as pd
-from market_scan import scan_market
 
 # ---------------------------------------------------------------- universes
 SECTOR_ETFS = {
@@ -244,7 +243,7 @@ if __name__ == "__main__":
     print(find_sector_rotation(universe="sectors+tech"))                  # 11 sectors + 9 tech groups, vs SPY
     
     
-    
+    from market_scan import scan_market
     res = scan_market(universe="sectors+tech")
     print(res["table"])
 
