@@ -2190,6 +2190,35 @@ def near_level(price: float, level: float | None, atr: float | None, max_atr: fl
             "dist_atr": round(dist_atr, 2) if dist_atr is not None else None}
 
 
+def premarket_near_support(report: dict) -> dict | None:
+    """Is the pre-market price within NEAR_SR_ATR daily ATRs of S1 or S2?
+    Returns {"near": bool, "level": "S1"/"S2", "price", "dist_pct", "dist_atr"} for the
+    closest of the two, or None when there's no pre-market price or no support."""
+    pm = report.get("pre_market")
+    sups = ((report.get("day_sr") or {}).get("supports") or [])[:2]
+    if pm is None or not sups:
+        return None
+    atr, max_atr = report.get("daily_atr"), report["cfg"].get("NEAR_SR_ATR", 0.5)
+    best = None
+    for k, lvl in enumerate(sups):
+        nr = near_level(pm, lvl["price"], atr, max_atr)
+        if nr and (best is None or abs(nr["dist_pct"]) < abs(best["dist_pct"])):
+            best = {**nr, "level": f"S{k + 1}", "price": lvl["price"]}
+    return best
+
+
+def _premarket_near_row(report: dict) -> tuple:
+    pns = premarket_near_support(report)
+    if pns is None:
+        why = "no pre-market price" if report.get("pre_market") is None else "no support in window"
+        return ("Pre-market near support", f"N/A ({why})")
+    side = "above" if pns["dist_pct"] >= 0 else "below"
+    atr_txt = f", {abs(pns['dist_atr']):.2f} ATR" if pns["dist_atr"] is not None else ""
+    return ("Pre-market near support",
+            f"{_badge(pns['near'], 'YES', 'NO')} {abs(pns['dist_pct']):.2f}% {side} "
+            f"{pns['level']} ({pns['price']}){atr_txt}")
+
+
 def _near_sr_rows(report: dict) -> list:
     """'Near S1' / 'Near S2' rows for the Other levels table."""
     rows = []
@@ -2268,6 +2297,7 @@ def render_ticker_html(report: dict) -> str:
             f"({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
             + (f"<br><span class=\"muted-small\">{pm_src_html}</span>" if pm_src_html else "")
             if report.get("pre_market") is not None else "N/A")),
+        _premarket_near_row(report),
         *([(f"Anchored VWAP (from {report['avwap']['anchor_type']} of {report['avwap']['anchor_date']})",
              f"{report['avwap']['value']} " + ("" if report['avwap']['above'] is None
                                                else _badge(report['avwap']['above'], "ABOVE", "BELOW")))]
@@ -2855,6 +2885,10 @@ def report_to_row(report: dict, report_group: str) -> dict:
         "channel_r2": lrc.get("r2"), "channel_position_pct": lrc.get("position_pct"),
     })
 
+    pns = premarket_near_support(report)
+    row["premarket_near_support"] = pns["near"] if pns else None
+    row["premarket_near_level"] = pns["level"] if pns else None
+    row["premarket_near_atr"] = pns["dist_atr"] if pns else None
     dsr = report.get("day_sr") or {}
     for k in range(2):
         sups = dsr.get("supports") or []
