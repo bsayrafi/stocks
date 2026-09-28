@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  run-screener:
+  check-sectors:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
