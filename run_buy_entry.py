@@ -100,12 +100,13 @@ def run_enrichment(num, runtype="all"):
             buy_start = time.time()
             results2_entry = check_buy_zone_confirmation(enrichment_tickers)
 
-            bench_map = get_benchmark_map(enrichment_tickers)
+            #bench_map = get_benchmark_map(enrichment_tickers)
 
-            bars = fetch_intraday_bars(enrichment_tickers + benchmark_symbols(bench_map))
-
-            dips = score_dips(enrichment_tickers, bars=bars, benchmarks=bench_map)
-            trends = score_trends(enrichment_tickers, bars=bars, benchmarks=bench_map)
+            #bars = fetch_intraday_bars(enrichment_tickers + benchmark_symbols(bench_map))
+            dips=[]
+            trends=[]
+            #dips = score_dips(enrichment_tickers, bars=bars, benchmarks=bench_map)
+            #trends = score_trends(enrichment_tickers, bars=bars, benchmarks=bench_map)
 
             print(f"check_buy_zone_confirmation took {time.time() - buy_start:.1f}s")
             all_df = results2_entry["all"]
@@ -136,24 +137,25 @@ def run_enrichment(num, runtype="all"):
                     header_text="FFFFFF",   
                 )
 
-                excel_writer.export_df_with_row_colors(
-                    df=dips,
-                    file_path=csv_filename.replace(".xlsx", "_dips.xlsx"),
-                    target_col="rank",
-                    sheet_name="Sheet1",
-                    color_map=status_colors,
-                    header_bg="1F4E78",    
-                    header_text="FFFFFF",   
-                )
-                excel_writer.export_df_with_row_colors(
-                    df=trends,
-                    file_path=csv_filename.replace(".xlsx", "_trends.xlsx"),
-                    target_col="rank",
-                    sheet_name="Sheet1",
-                    color_map=status_colors,
-                    header_bg="1F4E78",    
-                    header_text="FFFFFF",   
-                )
+                if len(dips) > 0 and len(trends) > 0:
+                    excel_writer.export_df_with_row_colors(
+                        df=dips,
+                        file_path=csv_filename.replace(".xlsx", "_dips.xlsx"),
+                        target_col="rank",
+                        sheet_name="Sheet1",
+                        color_map=status_colors,
+                        header_bg="1F4E78",    
+                        header_text="FFFFFF",   
+                    )
+                    excel_writer.export_df_with_row_colors(
+                        df=trends,
+                        file_path=csv_filename.replace(".xlsx", "_trends.xlsx"),
+                        target_col="rank",
+                        sheet_name="Sheet1",
+                        color_map=status_colors,
+                        header_bg="1F4E78",    
+                        header_text="FFFFFF",   
+                    )
                 # --- Intraday entry timing ---
                 confirmed_df = results2_entry["confirmed"]
         

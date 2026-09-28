@@ -302,8 +302,18 @@ CONFIGH = {
     "CACHE_DIR": "cache",
     "FINNHUB_MAX_PER_MIN": 55,     # Finnhub free tier allows 60 calls/minute
     "CATALYST_NEWS_DAYS": 14,      # headlines scanned for buyback/guidance keywords
+    "HHHL_DAYS": 20,               # window for the higher-high/higher-low day count (completed daily bars)
+    "DAILY_CHART_DAYS": 50,        # daily candles in the second (daily) chart
+    # Daily support/resistance = industry-standard swing levels (see swing_sr_levels)
+    "SR_DAYS": 60,                 # daily bars searched for swing support/resistance (~3 months; max ~130)
+    "NEAR_SR_ATR": 0.5,            # "Near S1/S2" = price within this many daily ATRs of the level
+    "SR_PIVOT": 2,                 # a swing low/high must be the lowest/highest of this many days on each side
+    "SR_MERGE_ATR": 0.5,           # swing points within this many daily ATRs are merged into one level
+    "TARGET_MIN_R": 2.0,           # targets below this reward:risk are flagged; fallback target when no resistance
+    "AVWAP_ANCHOR": "low",         # anchored VWAP starts at the daily chart's lowest low ("low") or highest high ("high")
+    "DAILY_CHART_OPEN": False,     # daily chart collapsed by default (its own show/hide link)
     "CHART_OPEN": False,           # chart collapsed by default (each card has a show/hide link)
-    "CHART_DAYS": 14,               # number of recent trading days of 1h candles to plot
+    "CHART_DAYS": 7,               # number of recent trading days of 1h candles to plot
     "CHART_MAS": [("ema", 9), ("ema", 50)],  # MA overlays drawn on the chart
     "POC_BINS": 50,                # price buckets for the volume profile / POC
     "MARKET_TZ": "America/New_York",
@@ -332,7 +342,7 @@ CONFIGH = {
     # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
     # Key: here, or the FINNHUB_API_KEY environment variable.
     "FINNHUB_API_KEY": _SECRETS.get("FINNHUB_API_KEY"),  # from constants.CONFIG
-    "NEWS_DAYS": 1,                # 0 = today only, 1 = today + yesterday, ...
+    "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
     "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
     "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,
@@ -874,6 +884,157 @@ def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
     return items
 
 
+def swing_sr_levels(daily_window: pd.DataFrame, price: float, atr: float | None, stop: float | None,
+                    pivot: int = 2, merge_atr: float = 0.5, min_r: float = 2.0) -> dict:
+    """Support and resistance the way most traders draw them: from SWING POINTS.
+      - swing low  = a day whose low is the lowest of `pivot` days on each side
+                     (buyers stepped in, price turned up)
+      - swing high = a day whose high is the highest of `pivot` days on each side
+    Swing points within merge_atr x daily ATR of each other are merged into one
+    level (price at the members' average); more touches = a stronger level.
+    Supports are levels below price (S1 = nearest), resistances above (T1 = nearest).
+    Targets: T1/T2 = the two nearest resistances, each with its reward:risk vs
+    the stop. If there's no resistance above (price at new highs), the target
+    falls back to min_r x risk.
+    Returns {"supports": [...], "resistances": [...], "target": {...}} where each
+    level is {"price", "touches", "last_date", "dist_pct", "r"}."""
+    out = {"supports": [], "resistances": [], "target": None}
+    if daily_window is None or len(daily_window) < 2 * pivot + 1 or not price:
+        return out
+    lows = daily_window["Low"].to_numpy(dtype=float)
+    highs = daily_window["High"].to_numpy(dtype=float)
+    dates = [t.date().isoformat() for t in daily_window.index]
+    n = len(lows)
+    pts_low = [(lows[i], dates[i]) for i in range(pivot, n - pivot)
+               if lows[i] == lows[i - pivot:i + pivot + 1].min()]
+    pts_high = [(highs[i], dates[i]) for i in range(pivot, n - pivot)
+                if highs[i] == highs[i - pivot:i + pivot + 1].max()]
+
+    tol = merge_atr * atr if atr else price * 0.01
+
+    def cluster(points):
+        levels = []
+        for p, d in sorted(points):
+            if levels and p - levels[-1]["members"][-1] <= tol:
+                levels[-1]["members"].append(p)
+                levels[-1]["dates"].append(d)
+            else:
+                levels.append({"members": [p], "dates": [d]})
+        return [{"price": round(float(np.mean(l["members"])), 2), "touches": len(l["members"]),
+                 "last_date": max(l["dates"])} for l in levels]
+
+    risk = (price - stop) if stop is not None and price > stop else None
+
+    def enrich(lvl):
+        lvl["dist_pct"] = round((lvl["price"] / price - 1) * 100, 2)
+        lvl["r"] = round((lvl["price"] - price) / risk, 2) if risk and lvl["price"] > price else None
+        return lvl
+
+    # swing highs AND lows both count as levels (old resistance can become support and vice versa)
+    all_levels = cluster(pts_low + pts_high)
+    out["supports"] = [enrich(l) for l in sorted((l for l in all_levels if l["price"] < price),
+                                                 key=lambda l: -l["price"])]
+    out["resistances"] = [enrich(l) for l in sorted((l for l in all_levels if l["price"] > price),
+                                                    key=lambda l: l["price"])]
+    if out["resistances"]:
+        t1 = out["resistances"][0]
+        out["target"] = {"price": t1["price"], "r": t1["r"], "source": "T1 - nearest resistance",
+                         "below_min_r": t1["r"] is not None and t1["r"] < min_r}
+    elif risk:
+        out["target"] = {"price": round(price + min_r * risk, 2), "r": min_r,
+                         "source": f"{min_r:g}R - no resistance above", "below_min_r": False}
+    return out
+
+
+def anchored_vwap(hourly: pd.DataFrame, daily_window: pd.DataFrame, anchor: str = "low",
+                  tz: str = "America/New_York") -> dict | None:
+    """Anchored VWAP: the volume-weighted average price of every trade since an
+    anchor day - here the day with the lowest low ("low") or highest high
+    ("high") in `daily_window`. From a low it's the average cost of everyone who
+    bought since the bottom; price holding above it = those buyers are in profit.
+    Computed from the hourly bars (typical price x volume, cumulative from the
+    anchor day's first bar) and sampled at each day's last bar.
+    Returns {"series": value per daily bar (NaN before the anchor), "anchor_ts",
+    "anchor_date", "anchor_price", "anchor_type", "value"} or None."""
+    if daily_window is None or daily_window.empty or hourly is None or hourly.empty:
+        return None
+    anchor_ts = daily_window["Low"].idxmin() if anchor == "low" else daily_window["High"].idxmax()
+    local = lambda ix: ix.tz_convert(tz) if ix.tz is not None else ix
+    anchor_date = local(pd.DatetimeIndex([anchor_ts]))[0].date()
+    hdates = np.asarray(local(hourly.index).date)
+    seg = hourly[hdates >= anchor_date]
+    if seg.empty or float(seg["Volume"].sum()) <= 0:
+        return None
+    typical = (seg["High"] + seg["Low"] + seg["Close"]) / 3
+    cum = (typical * seg["Volume"]).cumsum() / seg["Volume"].cumsum().replace(0, np.nan)
+    per_day = cum.groupby(np.asarray(local(seg.index).date)).last()
+    ddates = local(daily_window.index).date
+    series = pd.Series([per_day.get(d, np.nan) for d in ddates], index=daily_window.index, dtype=float)
+    value = series.dropna()
+    return {
+        "series": series,
+        "anchor_ts": anchor_ts,
+        "anchor_date": anchor_date,
+        "anchor_price": float(daily_window.loc[anchor_ts, "Low" if anchor == "low" else "High"]),
+        "anchor_type": anchor,
+        "value": round(float(value.iloc[-1]), 2) if not value.empty else None,
+    }
+
+
+def hhhl_stats(daily: pd.DataFrame, window: int = 20, tz: str = "America/New_York",
+               close_hhmm: str = "16:00") -> dict:
+    """Daily market-structure count. Each COMPLETED daily bar is compared with
+    the bar before it:
+        "up"    = higher high AND higher low
+        "down"  = lower high AND lower low
+        "mixed" = anything else (inside day, outside day, equal high/low)
+    Today's bar is left out while the session is still open (its high/low can
+    still change). Returns counts over the last `window` days, the current run
+    of same-type days and the run before it, and {date: type} for chart markers."""
+    d = daily.dropna(subset=["High", "Low"])
+    in_progress = False
+    if len(d):
+        now = pd.Timestamp.now(tz=tz)
+        last = d.index[-1]
+        last_date = (last.tz_convert(tz) if last.tzinfo is not None else last).date()
+        ch, cm = map(int, close_hhmm.split(":"))
+        if last_date == now.date() and now < now.normalize() + pd.Timedelta(hours=ch, minutes=cm):
+            in_progress = True
+            d = d.iloc[:-1]
+
+    hi, lo = d["High"].to_numpy(dtype=float), d["Low"].to_numpy(dtype=float)
+    kinds = []
+    for i in range(1, len(d)):
+        if hi[i] > hi[i - 1] and lo[i] > lo[i - 1]:
+            kinds.append("up")
+        elif hi[i] < hi[i - 1] and lo[i] < lo[i - 1]:
+            kinds.append("down")
+        else:
+            kinds.append("mixed")
+    idx = d.index[1:]
+    dates = [(t.tz_convert(tz) if t.tzinfo is not None else t).date() for t in idx]
+
+    # runs of same-type days, most recent first: [("up", 3), ("mixed", 2), ...]
+    runs = []
+    for k in reversed(kinds):
+        if runs and runs[-1][0] == k:
+            runs[-1] = (k, runs[-1][1] + 1)
+        else:
+            runs.append((k, 1))
+
+    recent = kinds[-window:] if window else kinds
+    up, down = recent.count("up"), recent.count("down")
+    return {
+        "window": len(recent),
+        "up_days": up, "down_days": down, "mixed_days": recent.count("mixed"),
+        "net": up - down,
+        "current_streak": runs[0] if runs else (None, 0),
+        "previous_streak": runs[1] if len(runs) > 1 else (None, 0),
+        "today_in_progress": in_progress,
+        "by_date": dict(zip(dates, kinds)),
+    }
+
+
 def linear_regression_channel(df: pd.DataFrame, length, dev: float, source: str = "Close") -> dict | None:
     """Least-squares line through the last `length` bars of `source` (x = bar
     number, so overnight gaps don't bend it), with parallel bands at +/- `dev`
@@ -1227,6 +1388,28 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     vwap_1h = session_vwap(tf_data["1h"], cfg.get("MARKET_TZ", "America/New_York"),
                            cfg.get("MARKET_OPEN", "09:30"), cfg.get("MARKET_CLOSE", "16:00"))
     chart["vwap"] = vwap_1h.loc[chart["ohlcv"].index]
+
+    # ---- daily structure (HH/HL) + daily chart - built from the daily bars we
+    # already resampled from the hourly download, so no extra data is fetched
+    hhhl = hhhl_stats(tf_data["1D"], cfg.get("HHHL_DAYS", 20), cfg.get("MARKET_TZ", "America/New_York"),
+                      cfg.get("MARKET_CLOSE", "16:00"))
+    chart["hhhl_by_date"] = hhhl["by_date"]
+    n_daily = cfg.get("DAILY_CHART_DAYS", 20)
+    daily_mas = {}
+    for ma_type, period in cfg.get("CHART_MAS", [(cfg["MA_TYPE"], cfg["MA_PERIOD"])]):
+        daily_mas[f"{ma_type.upper()}{period}"] = moving_average(tf_data["1D"], period, ma_type).iloc[-n_daily:]
+    chart["daily"] = {"ohlcv": tf_data["1D"].iloc[-n_daily:], "overlays": daily_mas,
+                      "today_in_progress": hhhl["today_in_progress"]}
+    avwap = anchored_vwap(tf_data["1h"], chart["daily"]["ohlcv"], cfg.get("AVWAP_ANCHOR", "low"),
+                          cfg.get("MARKET_TZ", "America/New_York"))
+    chart["daily"]["avwap"] = avwap
+    # levels are searched over SR_DAYS (independent of how many days the chart shows)
+    day_sr = swing_sr_levels(tf_data["1D"].iloc[-cfg.get("SR_DAYS", 60):], current_price, daily_atr_val, stop,
+                             pivot=cfg.get("SR_PIVOT", 2), merge_atr=cfg.get("SR_MERGE_ATR", 0.5),
+                             min_r=cfg.get("TARGET_MIN_R", 2.0))
+    chart["daily"]["sr"] = day_sr
+    if day_sr["target"]:                     # industry-standard target replaces the old 1.5x risk target
+        take_profit_target = day_sr["target"]["price"]
     vwap_valid = vwap_1h.dropna()
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
@@ -1347,6 +1530,12 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         "analyst": analyst,
         "catalysts": catalysts,
         "chart": chart,
+        "hhhl": {k: v for k, v in hhhl.items() if k != "by_date"},
+        "day_sr": day_sr,
+        "avwap": None if not avwap else {
+            "value": avwap["value"], "anchor_date": avwap["anchor_date"].isoformat(),
+            "anchor_type": avwap["anchor_type"], "anchor_price": round(avwap["anchor_price"], 2),
+            "above": (current_price > avwap["value"]) if avwap["value"] is not None else None},
         "poc": poc,
         "vwap": vwap_now,
         "above_vwap": above_vwap,
@@ -1397,6 +1586,11 @@ def print_report(report: dict) -> None:
         info = report.get("pre_market_info") or {}
         print(f"Pre-market price: {report['pre_market']} (as of {report.get('pre_market_time')} ET, "
               f"{str(info.get('source', '')).upper()}: {info.get('reason', '')})")
+    st = report.get("hhhl")
+    if st:
+        print(f"HH/HL days (last {st['window']} completed): {st['up_days']} up / {st['down_days']} down / "
+              f"{st['mixed_days']} mixed (net {st['net']:+d}); current streak {_streak_text(st['current_streak'])}, "
+              f"previous {_streak_text(st['previous_streak'])}")
     lrc = report.get("lrc")
     if lrc:
         print(f"Regression channel ({lrc['bars']} bars, {lrc['dev']}σ): {lrc['last_lower']} / "
@@ -1410,8 +1604,9 @@ def print_report(report: dict) -> None:
 
     # <--- ADD THIS BLOCK --->
     risk = report['current_price'] - report['stop']
-    print(f"Take-Profit Target (1.5x R:R): {report['take_profit']} "
-          f"(Risking {risk:.2f} per share)")
+    tgt = (report.get("day_sr") or {}).get("target") or {}
+    print(f"Take-Profit Target: {report['take_profit']} ({tgt.get('source', '1.5x risk')}, "
+          f"{tgt.get('r')}R; risking {risk:.2f} per share)")
     # <--------------------->
 
     print(f"\nSignal: {signal['signal']}  (hard requirements met: {signal['hard_requirements_met']}, "
@@ -1621,13 +1816,18 @@ def render_price_chart_svg(report: dict) -> str:
         p += tick_step
     parts.append(f'<line class="tick" x1="{right_x}" x2="{right_x}" y1="{pad_t}" y2="{pad_t + price_h}"/>')
 
+    hhhl_by_date = chart.get("hhhl_by_date") or {}   # daily HH/HL type per date (triangle after the date)
+
     # ---- market open / close markers (dotted white) + date labels, per session
     day_starts = [i for i in range(n) if new_day[i]] + [n]
     for d in range(n_days):
         ks = list(range(day_starts[d], day_starts[d + 1]))
         starts = mins[ks]
+        kind = hhhl_by_date.get(idx[ks[0]].date())
+        mark = ('<tspan class="hhhl-mark up"> &#9650;</tspan>' if kind == "up" else
+                '<tspan class="hhhl-mark down"> &#9660;</tspan>' if kind == "down" else "")
         parts.append(f'<text class="axis" x="{left[ks[0]] + 2:.1f}" y="{H - 6}">'
-                     f'{idx[ks[0]].strftime("%a %d %b")}</text>')
+                     f'{idx[ks[0]].strftime("%a %d %b")}{mark}</text>')
 
         # open: left edge of first bar if it starts at/after the open,
         # else interpolate inside the bar that contains the open (pre-market data)
@@ -1737,8 +1937,6 @@ def render_price_chart_svg(report: dict) -> str:
     chg_cls = "pass" if chg >= 0 else "fail"
 
     return f"""
-      <details class="chart-toggle"{' open' if cfg.get('CHART_OPEN', True) else ''}>
-        <summary><span class="when-closed">&#9656; Show chart</span><span class="when-open">&#9662; Hide chart</span></summary>
       <div class="chart-wrap">
         <div class="chart-head">
           <span>Last {n_days} trading days &middot; 1h candles</span>
@@ -1752,8 +1950,267 @@ def render_price_chart_svg(report: dict) -> str:
              role="img" aria-label="{html.escape(report['ticker'])} {n_days}-day price chart">
           {''.join(parts)}
         </svg>
-      </div>
-      </details>"""
+      </div>"""
+
+
+def render_daily_chart_svg(report: dict) -> str:
+    """Inline SVG of the last DAILY_CHART_DAYS daily candles (built from the
+    same hourly download - no extra data), with the MA overlays, daily
+    support/resistance, stop and target, HH/HL markers (green triangle under an
+    up day, red over a down day) and a volume strip."""
+    daily = (report.get("chart") or {}).get("daily")
+    if not daily or daily["ohlcv"].empty:
+        return ""
+    df = daily["ohlcv"]
+    overlays = {k: v.dropna() for k, v in (daily.get("overlays") or {}).items()}
+    cfg = report["cfg"]
+    by_date = (report.get("chart") or {}).get("hhhl_by_date") or {}
+    tz = cfg.get("MARKET_TZ", "America/New_York")
+    idx = df.index.tz_convert(tz) if df.index.tz is not None else df.index
+    n = len(df)
+    in_progress = daily.get("today_in_progress", False)
+
+    W = 1000
+    pad_l, pad_r, pad_t = 56, 160, 16
+    AXIS_W = 46
+    price_h, gap, vol_h, axis_h = 320, 10, 70, 34
+    H = pad_t + price_h + gap + vol_h + axis_h
+    plot_w = W - pad_l - pad_r
+    step = plot_w / n
+    body_w = max(2.0, step * 0.6)
+
+    def x(i):
+        return pad_l + step * (i + 0.5)
+
+    sr = (report.get("sr_levels") or {}).get("1D") or {}
+    dsr = daily.get("sr") or {}
+    levels = []
+    for k, lvl in enumerate((dsr.get("resistances") or [])[:2]):
+        rr = f" {lvl['r']:.1f}R" if lvl.get("r") is not None else ""
+        levels.append((f"T{k + 1}{rr}", lvl["price"], "lvl-target" if k == 0 else "lvl-target2"))
+    tgt = dsr.get("target") or {}
+    if tgt and not dsr.get("resistances"):   # fallback target (no resistance above)
+        levels.append((f"T {tgt['r']:g}R", tgt["price"], "lvl-target"))
+    for k, lvl in enumerate((dsr.get("supports") or [])[:2]):
+        levels.append((f"S{k + 1} x{lvl['touches']}", lvl["price"], "lvl-support" if k == 0 else "lvl-support2"))
+    levels += [
+              ("Stop", report.get("stop"), "lvl-stop")]
+    levels = [(lbl, float(v), cls) for lbl, v, cls in levels if v is not None and pd.notna(v)]
+
+    av = daily.get("avwap")
+    av_s = av["series"].dropna() if av else pd.Series(dtype=float)
+    cands = [float(df["Low"].min()), float(df["High"].max())] + [v for _, v, _ in levels]
+    if not av_s.empty:
+        cands += [float(av_s.min()), float(av_s.max())]
+    for sser in overlays.values():
+        if not sser.empty:
+            cands += [float(sser.min()), float(sser.max())]
+    lo, hi = min(cands), max(cands)
+    pad_p = (hi - lo) * 0.06 or 1.0
+    lo, hi = lo - pad_p, hi + pad_p
+
+    def y(p):
+        return pad_t + (hi - p) / (hi - lo) * price_h
+
+    vol_top = pad_t + price_h + gap
+    vol_bot = vol_top + vol_h
+    vmax = float(df["Volume"].max()) or 1.0
+    parts = []
+
+    # ---- grid (same "nice number" ticks as the hourly chart)
+    raw_step = (hi - lo) / 8
+    mag = 10 ** np.floor(np.log10(raw_step))
+    tick_step = min((m * mag for m in (1, 2, 2.5, 5, 10)), key=lambda st: abs(np.log(st / raw_step)))
+    decimals = 2 if tick_step < 1 else (1 if tick_step % 1 else 0)
+    right_x = pad_l + plot_w
+    p = np.ceil(lo / tick_step) * tick_step
+    while p <= hi:
+        yy = y(p)
+        label = f"{p:.{decimals}f}"
+        parts.append(f'<line class="grid" x1="{pad_l}" x2="{right_x}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
+        parts.append(f'<line class="tick" x1="{right_x}" x2="{right_x + 4}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
+        parts.append(f'<text class="axis" x="{pad_l - 6}" y="{yy + 3:.1f}" text-anchor="end">{label}</text>')
+        parts.append(f'<text class="axis" x="{right_x + 7}" y="{yy + 3:.1f}">{label}</text>')
+        p += tick_step
+    parts.append(f'<line class="tick" x1="{right_x}" x2="{right_x}" y1="{pad_t}" y2="{pad_t + price_h}"/>')
+
+    # ---- date labels with the abbreviated day name underneath. Every bar is
+    # labelled when there's room (~20 bars); with many bars, every other one.
+    every = max(1, int(np.ceil(36 / step)))   # keep labels ~36px+ apart (20 bars: all, 50 bars: every 3rd)
+    for i in range(n):
+        if (n - 1 - i) % every == 0:
+            parts.append(f'<text class="axis" x="{x(i):.1f}" y="{vol_bot + 14}" text-anchor="middle">'
+                         f'{idx[i].strftime("%d %b")}</text>')
+            parts.append(f'<text class="axis dayname" x="{x(i):.1f}" y="{vol_bot + 27}" text-anchor="middle">'
+                         f'{idx[i].strftime("%a")}</text>')
+
+    # ---- dotted vertical line at the start of each new week (just before Monday,
+    # or the first trading day of the week when Monday is a holiday)
+    for i in range(1, n):
+        if idx[i].isocalendar()[:2] != idx[i - 1].isocalendar()[:2]:
+            wx = x(i) - step / 2
+            parts.append(f'<line class="weeksep" x1="{wx:.1f}" x2="{wx:.1f}" y1="{pad_t}" y2="{vol_bot}">'
+                         f'<title>week of {idx[i].strftime("%d %b")}</title></line>')
+
+    # ---- volume, candles, HH/HL markers
+    for i, (_, row) in enumerate(df.iterrows()):
+        o, h, l, c, v = (float(row[k]) for k in ("Open", "High", "Low", "Close", "Volume"))
+        cls = "up" if c >= o else "down"
+        partial = in_progress and i == n - 1
+        top = vol_bot - (v / vmax) * vol_h
+        parts.append(f'<rect class="vol {cls}" x="{x(i) - body_w / 2:.1f}" y="{top:.1f}" '
+                     f'width="{body_w:.1f}" height="{vol_bot - top:.1f}"/>')
+        kind = by_date.get(idx[i].date())
+        tip = (f"{idx[i].strftime('%a %d %b')}{' (in progress)' if partial else ''}  O {o:.2f}  H {h:.2f}  "
+               f"L {l:.2f}  C {c:.2f}  Vol {v:,.0f}"
+               + (f"  | {'higher high + higher low' if kind == 'up' else 'lower high + lower low' if kind == 'down' else 'mixed'}"
+                  if kind else ""))
+        body_top, body_bot = y(max(o, c)), y(min(o, c))
+        parts.append(
+            f'<g class="candle {cls}{" partial" if partial else ""}"><title>{html.escape(tip)}</title>'
+            f'<line x1="{x(i):.1f}" x2="{x(i):.1f}" y1="{y(h):.1f}" y2="{y(l):.1f}"/>'
+            f'<rect x="{x(i) - body_w / 2:.1f}" y="{body_top:.1f}" width="{body_w:.1f}" '
+            f'height="{max(body_bot - body_top, 1):.1f}"/></g>')
+        if kind == "up":
+            parts.append(f'<text class="hhhl-mark up" x="{x(i):.1f}" y="{y(l) + 13:.1f}" text-anchor="middle">&#9650;</text>')
+        elif kind == "down":
+            parts.append(f'<text class="hhhl-mark down" x="{x(i):.1f}" y="{y(h) - 5:.1f}" text-anchor="middle">&#9660;</text>')
+
+    # ---- MA overlays
+    pos = {ts: i for i, ts in enumerate(df.index)}
+    legend = []
+    for k, (name, sser) in enumerate(overlays.items()):
+        pts = " ".join(f"{x(pos[ts]):.1f},{y(float(val)):.1f}" for ts, val in sser.items() if ts in pos)
+        if pts:
+            parts.append(f'<polyline class="ma ma-{k % 4}" points="{pts}"><title>{html.escape(name)} (daily)</title></polyline>')
+        legend.append(f'<i class="sw ma-sw ma-{k % 4}"></i>{html.escape(name)}')
+
+    # ---- anchored VWAP (line from the anchor day on, dot on the anchor low/high)
+    if not av_s.empty:
+        pts = " ".join(f"{x(pos[ts]):.1f},{y(float(v)):.1f}" for ts, v in av_s.items() if ts in pos)
+        parts.append(f'<polyline class="avwap" points="{pts}"><title>Anchored VWAP from the '
+                     f'{"low" if av["anchor_type"] == "low" else "high"} of '
+                     f'{pd.Timestamp(av["anchor_date"]).strftime("%d %b")}</title></polyline>')
+        if av["anchor_ts"] in pos:
+            parts.append(f'<circle class="avwap-anchor" cx="{x(pos[av["anchor_ts"]]):.1f}" '
+                         f'cy="{y(av["anchor_price"]):.1f}" r="3.5"/>')
+        levels.append(("AVWAP", float(av_s.iloc[-1]), "lvl-avwap"))
+        legend.append('<i class="sw ma-sw avwap-sw"></i>Anchored VWAP')
+
+    # ---- horizontal levels with right-side labels
+    label_ys = []
+    for lbl, val, cls in sorted(levels, key=lambda t: -t[1]):
+        yy = y(val)
+        ly = yy + 3
+        while any(abs(ly - prev) < 12 for prev in label_ys):
+            ly += 12
+        label_ys.append(ly)
+        if cls == "lvl-avwap":   # moving line - label only
+            parts.append(f'<text class="lvl-label {cls}" x="{right_x + AXIS_W}" y="{ly:.1f}">{lbl} {val:.2f}</text>')
+            continue
+        parts.append(f'<line class="lvl {cls}" x1="{pad_l}" x2="{right_x}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
+        parts.append(f'<text class="lvl-label {cls}" x="{right_x + AXIS_W}" y="{ly:.1f}">{lbl} {val:.2f}</text>')
+
+    first_o, last_c = float(df["Open"].iloc[0]), float(df["Close"].iloc[-1])
+    chg = (last_c / first_o - 1) * 100 if first_o else 0.0
+    st = report.get("hhhl") or {}
+    return f"""
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <span>Last {n} trading days &middot; daily candles{' (today in progress)' if in_progress else ''}</span>
+          <span class="badge {'pass' if chg >= 0 else 'fail'}">{chg:+.2f}%</span>
+          <span class="legend">{' '.join(legend)}
+            <i class="sw lvl-support"></i>Support S1/S2 <i class="sw lvl-target"></i>Target T1/T2
+            <i class="sw lvl-stop"></i>Stop
+            <span class="hhhl-mark up">&#9650;</span>HH+HL <span class="hhhl-mark down">&#9660;</span>LH+LL</span>
+        </div>
+        <svg class="price-chart" viewBox="0 0 {W} {H}"
+             role="img" aria-label="{html.escape(report['ticker'])} daily chart">
+          {''.join(parts)}
+        </svg>
+      </div>"""
+
+
+def _streak_text(streak) -> str:
+    kind, length = streak if streak else (None, 0)
+    if not kind:
+        return "N/A"
+    return f"{length} {kind} day{'s' if length != 1 else ''}"
+
+
+def render_chart_toggles(report: dict) -> str:
+    """Two independent show/hide links side by side ("1h chart", "Daily chart"),
+    each opening its chart below. Pure CSS (hidden checkboxes) - no JavaScript."""
+    cfg = report["cfg"]
+    hourly, daily = render_price_chart_svg(report), render_daily_chart_svg(report)
+    if not hourly and not daily:
+        return ""
+    uid = "".join(c if c.isalnum() else "_" for c in report["ticker"])
+    h_chk = " checked" if cfg.get("CHART_OPEN", False) else ""
+    d_chk = " checked" if cfg.get("DAILY_CHART_OPEN", False) else ""
+    # daily chart first (link on the left, chart on top), then the hourly chart
+    links, panels, inputs = [], [], []
+    if daily:
+        inputs.append(f'<input type="checkbox" class="tog tog-d" id="tog-d-{uid}"{d_chk}>')
+        links.append(f'<label for="tog-d-{uid}" class="lnk lnk-d"><span class="when-closed">&#9656; Show daily chart</span>'
+                     f'<span class="when-open">&#9662; Hide daily chart</span></label>')
+        panels.append(f'<div class="panel panel-d">{daily}</div>')
+    if hourly:
+        inputs.append(f'<input type="checkbox" class="tog tog-h" id="tog-h-{uid}"{h_chk}>')
+        links.append(f'<label for="tog-h-{uid}" class="lnk lnk-h"><span class="when-closed">&#9656; Show 1h chart</span>'
+                     f'<span class="when-open">&#9662; Hide 1h chart</span></label>')
+        panels.append(f'<div class="panel panel-h">{hourly}</div>')
+    return (f'\n      <div class="charts">{"".join(inputs)}'
+            f'<div class="tog-links">{"".join(links)}</div>{"".join(panels)}</div>')
+
+
+def _sr_text(levels, with_r: bool = False) -> str:
+    """'88.20 (-5.1%, 3 touches) / 84.10 (-9.5%, 1 touch)' for the two nearest levels."""
+    if not levels:
+        return "none in window"
+    parts = []
+    for lvl in levels[:2]:
+        extra = f", {lvl['r']:.1f}R" if with_r and lvl.get("r") is not None else ""
+        parts.append(f"{lvl['price']} ({lvl['dist_pct']:+.1f}%, {lvl['touches']} "
+                     f"touch{'es' if lvl['touches'] != 1 else ''}{extra})")
+    return " / ".join(parts)
+
+
+def near_level(price: float, level: float | None, atr: float | None, max_atr: float = 0.5) -> dict | None:
+    """Is `price` within max_atr daily ATRs of `level`? Returns
+    {"near": bool, "dist_pct": %, "dist_atr": distance in ATRs (positive = price above level)}."""
+    if level is None or not price:
+        return None
+    dist = price - level
+    dist_atr = dist / atr if atr else None
+    near = abs(dist_atr) <= max_atr if dist_atr is not None else abs(dist / price) <= 0.01
+    return {"near": bool(near), "dist_pct": round(dist / price * 100, 2),
+            "dist_atr": round(dist_atr, 2) if dist_atr is not None else None}
+
+
+def _near_sr_rows(report: dict) -> list:
+    """'Near S1' / 'Near S2' rows for the Other levels table."""
+    rows = []
+    sups = (report.get("day_sr") or {}).get("supports") or []
+    atr, max_atr = report.get("daily_atr"), report["cfg"].get("NEAR_SR_ATR", 0.5)
+    for k in range(2):
+        lvl = sups[k] if len(sups) > k else None
+        nr = near_level(report["current_price"], lvl["price"] if lvl else None, atr, max_atr)
+        if not nr:
+            rows.append((f"Near S{k + 1}", "N/A (no support in window)"))
+            continue
+        atr_txt = f", {nr['dist_atr']:.2f} ATR" if nr["dist_atr"] is not None else ""
+        rows.append((f"Near S{k + 1} ({lvl['price']})",
+                     f"{_badge(nr['near'], 'YES', 'NO')} {nr['dist_pct']:.2f}% above{atr_txt}"))
+    return rows
+
+
+def _target_r_html(report: dict) -> str:
+    tgt = (report.get("day_sr") or {}).get("target") or {}
+    if tgt.get("r") is None:
+        return ""
+    badge = " " + _badge(False, "", f"UNDER {report['cfg'].get('TARGET_MIN_R', 2.0):g}R") if tgt.get("below_min_r") else ""
+    return f" ({tgt['r']:.1f}R){badge}"
 
 
 @_profiled("HTML rendering (incl. chart)")
@@ -1809,8 +2266,21 @@ def render_ticker_html(report: dict) -> str:
             f"({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
             + (f"<br><span class=\"muted-small\">{pm_src_html}</span>" if pm_src_html else "")
             if report.get("pre_market") is not None else "N/A")),
+        *([(f"Anchored VWAP (from {report['avwap']['anchor_type']} of {report['avwap']['anchor_date']})",
+             f"{report['avwap']['value']} " + ("" if report['avwap']['above'] is None
+                                               else _badge(report['avwap']['above'], "ABOVE", "BELOW")))]
+          if report.get("avwap") and report["avwap"].get("value") is not None else []),
+        *([(f"HH/HL days (last {report['hhhl']['window']} completed)",
+             f"{report['hhhl']['up_days']} up / {report['hhhl']['down_days']} down / "
+             f"{report['hhhl']['mixed_days']} mixed (net {report['hhhl']['net']:+d})"),
+            ("Current streak", _streak_text(report["hhhl"]["current_streak"])),
+            ("Previous streak", _streak_text(report["hhhl"]["previous_streak"]))]
+          if report.get("hhhl") else []),
         ("Today's range", f"{today_range['day_low']} - {today_range['day_high']} (range {today_range['day_range']})"),
         ("1h entry support", f"{report['entry_support']}"),
+        ("Day support S1 / S2", _sr_text((report.get("day_sr") or {}).get("supports"))),
+        ("Day resistance T1 / T2", _sr_text((report.get("day_sr") or {}).get("resistances"), with_r=True)),
+        *_near_sr_rows(report),
         (f"POC ({cfg.get('CHART_DAYS', 7)}d volume profile)", f"{report.get('poc', 'N/A')}"),
         ("Session VWAP", f"{report.get('vwap') if report.get('vwap') is not None else 'N/A'} {vwap_badge}"),
     ]
@@ -1827,7 +2297,8 @@ def render_ticker_html(report: dict) -> str:
         ]
     other_items += [
         ("Structural stop (1h support - 0.5x daily ATR)", f"{report['stop']}"),
-        ("<strong>Take-Profit Target (1.5x)</strong>", f"<strong>{report['take_profit']}</strong>"),
+        (f"<strong>Take-Profit Target ({html.escape(((report.get('day_sr') or {}).get('target') or {}).get('source', '1.5x risk'))})</strong>",
+         f"<strong>{report['take_profit']}</strong>" + _target_r_html(report)),
     ]
     other_levels_block = "\n      <h3>Other levels</h3>" + _four_col_table(other_items)
 
@@ -2014,7 +2485,7 @@ def render_ticker_html(report: dict) -> str:
         <div class="price">${report['current_price']:.2f}</div>
         <div class="signal-badge {signal_cls}">{'BUY_SIGNAL' if signal['signal'] == 'BUY' else signal['signal']}</div>
       </div>
-      {render_price_chart_svg(report)}
+      {render_chart_toggles(report)}
 
       <table class="tf-table">
         <thead>
@@ -2080,6 +2551,7 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
     --poc: #ff79c6;
     --vwap: #ffffff;
     --premkt: #ffe600;
+    --avwap: #4dd0e1;
   }}
   * {{ box-sizing: border-box; }}
   body {{
@@ -2129,6 +2601,34 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
 
   /* ---- 7-day price chart */
   .chart-wrap {{ margin: 4px 0 20px; }}
+  .charts {{ margin: 0 0 12px; }}
+  .charts .tog, .charts .panel {{ display: none; }}
+  .charts .tog-links {{ display: flex; gap: 22px; margin-bottom: 6px; }}
+  .charts .lnk {{ cursor: pointer; color: var(--accent); font-size: 12px; user-select: none; }}
+  .charts .lnk:hover {{ text-decoration: underline; }}
+  .charts .lnk .when-open {{ display: none; }}
+  .charts .tog-h:checked ~ .panel-h, .charts .tog-d:checked ~ .panel-d {{ display: block; }}
+  .charts .tog-h:checked ~ .tog-links .lnk-h .when-open,
+  .charts .tog-d:checked ~ .tog-links .lnk-d .when-open {{ display: inline; }}
+  .charts .tog-h:checked ~ .tog-links .lnk-h .when-closed,
+  .charts .tog-d:checked ~ .tog-links .lnk-d .when-closed {{ display: none; }}
+  .hhhl-mark {{ font-size: 10px; }}
+  .price-chart .axis.dayname {{ fill: var(--muted); opacity: 0.75; }}
+  .price-chart .weeksep {{ stroke: #ffffff; stroke-opacity: 0.4; stroke-width: 1; stroke-dasharray: 1 3; }}
+  .price-chart .avwap {{ fill: none; stroke: var(--avwap); stroke-width: 1.8; }}
+  .price-chart .avwap-anchor {{ fill: var(--avwap); }}
+  .price-chart .lvl-label.lvl-avwap {{ fill: var(--avwap); }}
+  .sw.avwap-sw {{ border-color: var(--avwap); }}
+  .hhhl-mark.up {{ fill: var(--pass); color: var(--pass); }}
+  .hhhl-mark.down {{ fill: var(--fail); color: var(--fail); }}
+  .price-chart .candle.partial {{ opacity: 0.55; }}
+  .price-chart .lvl.lvl-res {{ stroke: var(--muted); }}
+  .price-chart .lvl-label.lvl-res {{ fill: var(--muted); }}
+  .sw.lvl-res {{ border-color: var(--muted); }}
+  .price-chart .lvl.lvl-support2 {{ stroke: var(--accent); stroke-opacity: 0.5; stroke-dasharray: 2 4; }}
+  .price-chart .lvl-label.lvl-support2 {{ fill: var(--accent); opacity: 0.7; }}
+  .price-chart .lvl.lvl-target2 {{ stroke: var(--pass); stroke-opacity: 0.5; stroke-dasharray: 2 4; }}
+  .price-chart .lvl-label.lvl-target2 {{ fill: var(--pass); opacity: 0.7; }}
   .chart-toggle {{ margin: 0 0 12px; }}
   .chart-toggle summary {{ list-style: none; cursor: pointer; color: var(--accent);
                            font-size: 12px; display: inline-block; margin-bottom: 6px; user-select: none; }}
@@ -2326,16 +2826,48 @@ def report_to_row(report: dict, report_group: str) -> dict:
         "atr_projected_high": round(tr["day_low"] + atr, 2) if atr else None,
         "entry_support_1h": report["entry_support"],
         "stop": report["stop"], "take_profit": report["take_profit"],
+        "target_source": ((report.get("day_sr") or {}).get("target") or {}).get("source"),
+        "target_r": ((report.get("day_sr") or {}).get("target") or {}).get("r"),
+        "target_below_min_r": ((report.get("day_sr") or {}).get("target") or {}).get("below_min_r"),
         "poc": report.get("poc"), "vwap": report.get("vwap"), "above_vwap": report.get("above_vwap"),
     })
     lrc = report.get("lrc") or {}
     row.update({
         "trend_dir": report.get("trend_dir"),
         "trend_reason": report.get("trend_reason"),
+        "avwap": (report.get("avwap") or {}).get("value"),
+        "avwap_anchor_type": (report.get("avwap") or {}).get("anchor_type"),
+        "avwap_anchor_date": (report.get("avwap") or {}).get("anchor_date"),
+        "above_avwap": (report.get("avwap") or {}).get("above"),
+        "hhhl_window_days": (report.get("hhhl") or {}).get("window"),
+        "hhhl_up_days": (report.get("hhhl") or {}).get("up_days"),
+        "hhhl_down_days": (report.get("hhhl") or {}).get("down_days"),
+        "hhhl_mixed_days": (report.get("hhhl") or {}).get("mixed_days"),
+        "hhhl_net": (report.get("hhhl") or {}).get("net"),
+        "streak_current_type": ((report.get("hhhl") or {}).get("current_streak") or (None, None))[0],
+        "streak_current_days": ((report.get("hhhl") or {}).get("current_streak") or (None, None))[1],
+        "streak_previous_type": ((report.get("hhhl") or {}).get("previous_streak") or (None, None))[0],
+        "streak_previous_days": ((report.get("hhhl") or {}).get("previous_streak") or (None, None))[1],
         "channel_lower": lrc.get("last_lower"), "channel_mid": lrc.get("last_mid"),
         "channel_upper": lrc.get("last_upper"), "channel_slope_pct_day": lrc.get("slope_pct_per_day"),
         "channel_r2": lrc.get("r2"), "channel_position_pct": lrc.get("position_pct"),
     })
+
+    dsr = report.get("day_sr") or {}
+    for k in range(2):
+        sups = dsr.get("supports") or []
+        nr = near_level(report["current_price"], sups[k]["price"] if len(sups) > k else None,
+                        report.get("daily_atr"), cfg.get("NEAR_SR_ATR", 0.5))
+        row[f"near_s{k + 1}"] = nr["near"] if nr else None
+        row[f"near_s{k + 1}_atr"] = nr["dist_atr"] if nr else None
+    for pre, key in (("s", "supports"), ("t", "resistances")):
+        for k in range(2):
+            lvl = (dsr.get(key) or [])[k] if len(dsr.get(key) or []) > k else {}
+            row[f"day_{pre}{k + 1}"] = lvl.get("price")
+            row[f"day_{pre}{k + 1}_pct"] = lvl.get("dist_pct")
+            row[f"day_{pre}{k + 1}_touches"] = lvl.get("touches")
+            if pre == "t":
+                row[f"day_{pre}{k + 1}_r"] = lvl.get("r")
 
     # --- fundamentals (raw yfinance values: ratios as fractions, e.g. 0.25 = 25%)
     raw = report.get("fund_raw") or {}
