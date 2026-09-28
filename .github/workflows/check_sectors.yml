@@ -1,0 +1,95 @@
+name: check sectors
+
+# This allows you to run it manually with a button click
+on:
+  workflow_dispatch:
+
+# Never run two screeners at once (they would race on the cache)
+concurrency:
+  group: check_sectors
+  cancel-in-progress: false
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # Step 1: Download your repository files (including your custom .py files)
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+# Step 2: Set up Python
+      - name: Set up Python 3.10
+        id: py
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3a: Restore the saved virtualenv (key changes only when requirements.txt or Python changes)
+      - name: Restore virtualenv
+        id: venv-cache
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('requirements.txt') }}
+
+      # Step 3b: Only on a cache miss - install with uv (much faster than pip)
+      - name: Set up uv
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Dependencies
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        run: |
+          uv venv .venv --python "${{ steps.py.outputs.python-path }}"
+          uv pip install --python .venv -r requirements.txt
+
+      # Step 3c: Make `python` in later steps use the virtualenv
+      - name: Activate virtualenv
+        run: |
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+  
+
+      # Step 4: Run your cleaned Python script
+      - name: Run Screener Script
+        env:
+          # Injects the secret we created earlier!
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # API keys - used when constants.CONFIG doesn't provide them
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+        # IMPORTANT: Make sure this matches the exact name of your main script file
+        run: |
+          mkdir -p reports
+          mkdir -p data
+          mkdir -p cache
+          python sector_rotation.py
+
+      # Step 4.2: Save this run's cache for later runs today (also if the script failed partway)
+      - name: Save daily cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: screener-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
+
+      # Step 4.5: Generate the date (Day-Month)
+      - name: Get current date
+        run: echo "DATE=$(date +'%m_%d_%H')" >> $GITHUB_ENV
+
+      # Step 5: Save the generated Excel files as Artifacts
+      - name: Upload Excel Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: BuySignal_Results_${{ env.DATE }}
+          path: |
+            data/*.xlsx
+            data/*.csv
+            reports/*.html
+            reports/*.csv
+          retention-days: 1
