@@ -68,7 +68,7 @@ jobs:
           mkdir -p reports
           mkdir -p data
           mkdir -p cache
-          python sector_rotation.py
+          python run_scan.py
 
       # Step 4.2: Save this run's cache for later runs today (also if the script failed partway)
       - name: Save daily cache
