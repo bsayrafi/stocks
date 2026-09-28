@@ -1,0 +1,218 @@
+"""
+sector_rotation.py
+
+Find which sectors / industries / themes money is rotating into, measured
+relative to a benchmark.
+
+Usage:
+    from sector_rotation import find_sector_rotation
+
+    find_sector_rotation()                                   # 11 GICS sectors vs SPY
+    find_sector_rotation(universe="industries")              # ~30 industry ETFs vs SPY
+    find_sector_rotation(universe="tech", benchmark="XLK")   # inside tech: semis vs software vs AI...
+
+    # Your own themes as equal-weight baskets (best way to isolate "AI"):
+    find_sector_rotation(
+        universe="tech", benchmark="XLK",
+        baskets={"AI compute": ["NVDA", "AVGO", "AMD", "TSM"],
+                 "AI apps":    ["MSFT", "PLTR", "CRM", "NOW"]},
+    )
+
+Requires: pip install yfinance pandas numpy
+"""
+
+import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------- universes
+SECTOR_ETFS = {
+    "XLK": "Technology", "XLF": "Financials", "XLE": "Energy",
+    "XLV": "Health Care", "XLY": "Consumer Discretionary", "XLP": "Consumer Staples",
+    "XLI": "Industrials", "XLB": "Materials", "XLU": "Utilities",
+    "XLRE": "Real Estate", "XLC": "Communication Services",
+}
+
+# Inside tech. Use benchmark="XLK" to see rotation *within* tech.
+TECH_SUBSECTORS = {
+    "SMH": "Semiconductors (VanEck)",
+    "SOXX": "Semiconductors (iShares)",
+    "IGV": "Software",
+    "AIQ": "AI & Big Data",
+    "BOTZ": "Robotics & AI",
+    "CIBR": "Cybersecurity",
+    "SKYY": "Cloud Computing",
+    "FDN": "Internet",
+    "XSD": "Semis (equal-weight)",
+}
+
+INDUSTRY_ETFS = {
+    **TECH_SUBSECTORS,
+    "XBI": "Biotech", "IHI": "Medical Devices", "IHF": "Health Providers",
+    "KRE": "Regional Banks", "KBE": "Banks", "IAI": "Brokers/Exchanges",
+    "XOP": "Oil & Gas E&P", "OIH": "Oil Services", "URA": "Uranium",
+    "XME": "Metals & Mining", "GDX": "Gold Miners", "COPX": "Copper Miners",
+    "ITA": "Aerospace & Defense", "IYT": "Transportation", "JETS": "Airlines",
+    "ITB": "Homebuilders", "XRT": "Retail", "PBJ": "Food & Beverage",
+    "TAN": "Solar", "ICLN": "Clean Energy", "LIT": "Lithium & Batteries",
+}
+
+UNIVERSES = {
+    "sectors": SECTOR_ETFS,
+    "tech": TECH_SUBSECTORS,
+    "industries": INDUSTRY_ETFS,
+}
+
+
+# ------------------------------------------------------------------ helpers
+def _resolve_universe(universe):
+    if isinstance(universe, str):
+        return dict(UNIVERSES[universe])
+    if isinstance(universe, dict):
+        return dict(universe)
+    return {t: t for t in universe}  # plain list of tickers
+
+
+def _download(tickers, lookback_days, short_days):
+    import yfinance as yf
+
+    bars_needed = lookback_days + short_days + 10
+    start = pd.Timestamp.today().normalize() - pd.Timedelta(days=int(bars_needed * 1.6) + 30)
+    raw = yf.download(tickers, start=start, auto_adjust=True, progress=False, group_by="column")
+    return raw["Close"].dropna(how="all"), raw["Volume"].dropna(how="all")
+
+
+def _build_basket(prices, volumes, members):
+    """Equal-weight basket: synthetic price index + summed dollar volume."""
+    rets = prices[members].pct_change().mean(axis=1).fillna(0)
+    level = 100 * (1 + rets).cumprod()
+    dollar_vol = (prices[members] * volumes[members]).sum(axis=1)
+    return level, dollar_vol / level  # price * "volume" == basket dollar volume
+
+
+def _quadrant(rs_ratio, rs_mom):
+    if rs_ratio >= 100 and rs_mom >= 100:
+        return "Leading"
+    if rs_ratio < 100 and rs_mom >= 100:
+        return "Improving"   # classic early rotation-in signal
+    if rs_ratio >= 100 and rs_mom < 100:
+        return "Weakening"
+    return "Lagging"
+
+
+# ---------------------------------------------------------------- main API
+def find_sector_rotation(
+    universe="sectors",
+    benchmark: str = "SPY",
+    baskets: dict = None,
+    lookback_days: int = 60,
+    short_days: int = 20,
+    top_n: int = 3,
+    prices: pd.DataFrame = None,
+    volumes: pd.DataFrame = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    Rank groups by how strongly money appears to be rotating into them.
+
+    Parameters
+    ----------
+    universe : "sectors" | "tech" | "industries" | dict {ticker: name} | list of tickers
+    benchmark : ticker to measure against. Use a parent (e.g. "XLK") to see
+                rotation *within* that sector rather than vs the whole market.
+    baskets : optional {name: [tickers]} equal-weight custom themes (e.g. AI).
+              They are ranked alongside the universe.
+    lookback_days / short_days : baseline and "recent" windows in trading days
+    top_n : how many top/bottom groups to print
+    prices, volumes : optional DataFrames (columns = tickers, incl. benchmark and
+                      basket members) to skip the download
+
+    Returns
+    -------
+    DataFrame indexed by ticker/basket name, sorted by score (best first).
+    Columns: name, rel_ret_long, rel_ret_short, rs_ratio, rs_momentum,
+             flow_proxy, quadrant, score
+    """
+    names = _resolve_universe(universe)
+    names.pop(benchmark, None)              # don't rank the benchmark against itself
+    baskets = baskets or {}
+
+    members = sorted({m for ms in baskets.values() for m in ms})
+    tickers = sorted(set(names) | {benchmark} | set(members))
+
+    if prices is None or volumes is None:
+        prices, volumes = _download(tickers, lookback_days, short_days)
+
+    need = lookback_days + short_days
+    # Drop tickers with too little history (recent IPOs, bad symbols) instead of failing
+    keep = [t for t in tickers if t in prices.columns and prices[t].count() >= need + 5]
+    dropped = sorted(set(tickers) - set(keep))
+    if dropped and verbose:
+        print(f"Skipped (missing/insufficient data): {', '.join(dropped)}\n")
+    if benchmark not in keep:
+        raise ValueError(f"No usable data for benchmark {benchmark}.")
+
+    prices = prices[keep].ffill().dropna()
+    volumes = volumes[keep].reindex(prices.index).fillna(0)
+    if len(prices) < need:
+        raise ValueError(f"Not enough data: need {need} rows, got {len(prices)}.")
+
+    groups = {t: n for t, n in names.items() if t in keep}
+
+    # Add custom baskets as synthetic price/volume columns
+    for bname, ms in baskets.items():
+        ms = [m for m in ms if m in keep]
+        if not ms:
+            continue
+        level, vol = _build_basket(prices, volumes, ms)
+        prices[bname], volumes[bname] = level, vol
+        groups[bname] = f"Basket ({len(ms)} stocks)"
+
+    cols = list(groups)
+
+    # --- relative performance ---
+    ret_long = prices.iloc[-1] / prices.iloc[-lookback_days - 1] - 1
+    ret_short = prices.iloc[-1] / prices.iloc[-short_days - 1] - 1
+    rel_long = ret_long - ret_long[benchmark]
+    rel_short = ret_short - ret_short[benchmark]
+
+    # --- RRG-style relative strength ---
+    rs_line = prices[cols].div(prices[benchmark], axis=0)
+    rs_ratio_s = 100 * rs_line / rs_line.rolling(lookback_days).mean()
+    rs_ratio = rs_ratio_s.iloc[-1]
+    rs_mom = 100 * rs_ratio_s.iloc[-1] / rs_ratio_s.iloc[-1 - short_days]
+
+    # --- dollar-volume surge relative to benchmark (flow proxy) ---
+    dv = prices * volumes
+    surge = dv.iloc[-short_days:].mean() / dv.iloc[-(short_days + lookback_days):-short_days].mean()
+    flow = surge / surge[benchmark] - 1
+
+    df = pd.DataFrame({
+        "name": pd.Series(groups),
+        "rel_ret_long": rel_long[cols],
+        "rel_ret_short": rel_short[cols],
+        "rs_ratio": rs_ratio[cols],
+        "rs_momentum": rs_mom[cols],
+        "flow_proxy": flow[cols],
+    })
+    df["quadrant"] = [_quadrant(r, m) for r, m in zip(df["rs_ratio"], df["rs_momentum"])]
+    df["score"] = df[["rel_ret_short", "rs_momentum", "flow_proxy"]].rank(pct=True).mean(axis=1)
+    df = df.sort_values("score", ascending=False)
+
+    if verbose:
+        print(f"Rotation vs {benchmark} (lookback={lookback_days}d, recent={short_days}d)\n")
+        def show(title, rows):
+            print(title)
+            for tkr, r in rows.iterrows():
+                print(f"  {tkr:12} {r['name']:26} {r['quadrant']:10} score={r['score']:.2f}  "
+                      f"rel_ret_short={r['rel_ret_short']:+.1%}  flow={r['flow_proxy']:+.1%}")
+        show(f"Top {top_n} - money rotating INTO:", df.head(top_n))
+        print()
+        show(f"Bottom {top_n} - money rotating OUT:", df.tail(top_n).iloc[::-1])
+
+    return df
+
+
+if __name__ == "__main__":
+    pd.set_option("display.float_format", lambda v: f"{v:.3f}")
+    pd.set_option("display.width", 200)
+    print(find_sector_rotation(universe="tech", benchmark="XLK"))
