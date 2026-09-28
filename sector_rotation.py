@@ -24,6 +24,7 @@ Requires: pip install yfinance pandas numpy
 
 import numpy as np
 import pandas as pd
+from market_scan import scan_market
 
 # ---------------------------------------------------------------- universes
 SECTOR_ETFS = {
@@ -241,8 +242,13 @@ if __name__ == "__main__":
     pd.set_option("display.float_format", lambda v: f"{v:.3f}")
     pd.set_option("display.width", 200)
     print(find_sector_rotation(universe="sectors+tech"))                  # 11 sectors + 9 tech groups, vs SPY
-    print(scan_market(universe="sectors+tech"))                           # same, with the oil/yield columns
+    
+    
+    
+    res = scan_market(universe="sectors+tech")
+    print(res["table"])
 
+       
     # with your AI baskets in the same table
     print(find_sector_rotation(universe="sectors+tech",
                      baskets={"AI compute": ["NVDA", "AVGO", "AMD", "TSM"],
