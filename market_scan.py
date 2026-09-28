@@ -62,6 +62,8 @@ def scan_market(
     top_n: int = 3,
     price_confirmed_flow: bool = True,
     macro_relative: bool = True,
+    dedupe_themes: bool = True,
+    min_dollar_volume: float = 10e6,
     save_csv: bool = True,
     output_dir: str = "data",
     prices: pd.DataFrame = None,
@@ -85,6 +87,8 @@ def scan_market(
       Weak            neither
       Factor flat     the factor isn't moving, so no tailwind/headwind call is made
 
+    dedupe_themes / min_dollar_volume : keep only the largest-volume ETF per theme and drop ETFs
+                     below a daily dollar-volume floor (see find_sector_rotation).
     macro_relative : measure each group's factor reaction relative to the benchmark (default),
                      so tilt shows what is specific to the group, not the market-wide effect.
     save_csv / output_dir : write the table and factor status as CSV files into a `data`
@@ -92,7 +96,8 @@ def scan_market(
                      to this script. Files are named with the scan date, e.g.
                      data/market_scan_sectors+tech_2026-09-28.csv
 
-    Returns {"table": DataFrame, "factors": DataFrame, "csv_path": str or None}
+    Returns {"table", "factors", "themes" (mean score per theme), "excluded" (what was dropped
+             and why), "csv_path"}
     """
     names = _resolve_universe(universe)
     names.pop(benchmark, None)
@@ -113,8 +118,11 @@ def scan_market(
         universe=names, benchmark=benchmark, baskets=baskets,
         lookback_days=lookback_days, short_days=short_days,
         price_confirmed_flow=price_confirmed_flow,
+        dedupe_themes=dedupe_themes, min_dollar_volume=min_dollar_volume,
         prices=prices, volumes=volumes, verbose=False,
-    ).rename(columns={"score": "rotation_score"})
+    )
+    excluded = dict(rot.attrs.get("excluded", {}))
+    rot = rot.rename(columns={"score": "rotation_score"})
 
     # 2) macro. Baskets are added as synthetic price columns so they get factor tilts too.
     macro_prices = prices.copy()
@@ -122,7 +130,8 @@ def scan_market(
     v_fill = volumes.reindex(prices.index).fillna(0)
     macro_names = {
         t: n for t, n in names.items()
-        if t in prices.columns and prices[t].count() >= macro_window + macro_short_days + 5
+        if t in rot.index and t in prices.columns
+        and prices[t].count() >= macro_window + macro_short_days + 5
     }
     for bname, ms in baskets.items():
         ms = [m for m in ms if m in p_ff.columns and m in v_fill.columns and p_ff[m].count() > 0]
@@ -154,6 +163,10 @@ def scan_market(
     if verbose:
         fdf = macro["factors"]
         print(f"Market scan vs {benchmark}\n")
+        for t, why in excluded.items():
+            print(f"  excluded {t}: {why}")
+        if excluded:
+            print()
         print("Macro factors:")
         for name, r in fdf.iterrows():
             print(f"  {name:8} {r['level']:8.2f}  {r['state']:8} "
@@ -200,7 +213,13 @@ def scan_market(
         if verbose:
             print(f"\nSaved: {csv_path}")
 
-    return {"table": df, "factors": macro["factors"], "csv_path": csv_path}
+    themes = df.groupby("theme").agg(
+        rotation_score=("rotation_score", "mean"), n=("rotation_score", "size"),
+        members=("name", lambda s: ", ".join(s.index)),
+    ).sort_values("rotation_score", ascending=False)
+
+    return {"table": df, "factors": macro["factors"], "themes": themes,
+            "excluded": excluded, "csv_path": csv_path}
 
 
 if __name__ == "__main__":

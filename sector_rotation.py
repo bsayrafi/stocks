@@ -67,6 +67,18 @@ UNIVERSES = {
 }
 
 
+# Themes: ETFs that hold largely the same stocks share a theme. With dedupe_themes=True only
+# the ETF with the largest average dollar volume in each theme is kept, so near-duplicates
+# (SMH / SOXX / XSD) count as one signal. Tickers not listed here are their own theme.
+THEMES = {
+    "SMH": "Semiconductors", "SOXX": "Semiconductors", "XSD": "Semiconductors",
+    "AIQ": "AI", "BOTZ": "AI",
+    "IGV": "Software", "CIBR": "Cybersecurity", "SKYY": "Cloud", "FDN": "Internet",
+    "KRE": "Banks", "KBE": "Banks",
+    "ICLN": "Clean Energy", "TAN": "Clean Energy",
+}
+
+
 # ------------------------------------------------------------------ helpers
 def _resolve_universe(universe):
     if isinstance(universe, str):
@@ -112,6 +124,8 @@ def find_sector_rotation(
     short_days: int = 20,
     top_n: int = 3,
     price_confirmed_flow: bool = True,
+    dedupe_themes: bool = True,
+    min_dollar_volume: float = 10e6,
     prices: pd.DataFrame = None,
     volumes: pd.DataFrame = None,
     verbose: bool = True,
@@ -133,14 +147,19 @@ def find_sector_rotation(
                 treated as distribution (negative), and a volume drop while it is
                 outperforming is treated as neutral, not negative. If False, the raw
                 flow_proxy is ranked directly (older behavior).
+    dedupe_themes : if True (default), keep only the largest-volume ETF in each theme (see THEMES),
+                so e.g. SMH / SOXX / XSD count once. Baskets are never removed.
+    min_dollar_volume : drop ETFs whose average daily dollar volume over the lookback + recent
+                windows is below this (default $10M/day; set 0 or None to disable). Baskets are exempt.
+                Anything removed is listed in the printout and in result.attrs["excluded"].
     prices, volumes : optional DataFrames (columns = tickers, incl. benchmark and
                       basket members) to skip the download
 
     Returns
     -------
     DataFrame indexed by ticker/basket name, sorted by score (best first).
-    Columns: name, group (Sector/Tech/Industry/Basket), rel_ret_long, rel_ret_short, rs_ratio, rs_momentum,
-             flow_proxy, flow_adj, quadrant, score
+    Columns: rank, name, group (Sector/Tech/Industry/Basket), theme, rel_ret_long, rel_ret_short, rs_ratio, rs_momentum,
+             flow_proxy, flow_adj, quadrant, score, avg_dollar_volume
     """
     names = _resolve_universe(universe)
     names.pop(benchmark, None)              # don't rank the benchmark against itself
@@ -167,6 +186,29 @@ def find_sector_rotation(
         raise ValueError(f"Not enough data: need {need} rows, got {len(prices)}.")
 
     groups = {t: n for t, n in names.items() if t in keep}
+
+    # --- one ETF per theme (largest volume wins) and a liquidity floor ---
+    adv = (prices * volumes).iloc[-need:].mean()          # avg daily dollar volume
+    excluded = {}
+    if dedupe_themes:
+        by_theme = {}
+        for t in groups:
+            by_theme.setdefault(THEMES.get(t, groups[t]), []).append(t)
+        for theme, ts in by_theme.items():
+            if len(ts) > 1:
+                best = max(ts, key=lambda x: adv[x])
+                for t in ts:
+                    if t != best:
+                        excluded[t] = (f"smaller than {best} in theme '{theme}' "
+                                       f"(${adv[t] / 1e6:,.0f}M/day vs ${adv[best] / 1e6:,.0f}M/day)")
+                        del groups[t]
+    if min_dollar_volume:
+        for t in list(groups):
+            if adv[t] < min_dollar_volume:
+                excluded[t] = f"low volume (${adv[t] / 1e6:,.1f}M/day)"
+                del groups[t]
+    if not groups and not baskets:
+        raise ValueError("No ETFs left after the volume / theme filters.")
 
     # Add custom baskets as synthetic price/volume columns
     for bname, ms in baskets.items():
@@ -210,6 +252,9 @@ def find_sector_rotation(
         if t in TECH_SUBSECTORS else "Industry" if t in INDUSTRY_ETFS else "Custom"
         for t in df.index
     ])
+    df.insert(2, "theme", [
+        t if t in baskets else THEMES.get(t, names.get(t, t)) for t in df.index
+    ])
     if price_confirmed_flow:
         surge_pos = df["flow_proxy"].clip(lower=0)
         # price agrees (outperforming): a surge adds, no surge is neutral
@@ -218,10 +263,17 @@ def find_sector_rotation(
     else:
         df["flow_adj"] = df["flow_proxy"]
     df["score"] = df[["rel_ret_short", "rs_momentum", "flow_adj"]].rank(pct=True).mean(axis=1)
+    df["avg_dollar_volume"] = dv.iloc[-need:].mean()[cols]
     df = df.sort_values("score", ascending=False)
+    df.insert(0, "rank", range(1, len(df) + 1))
+    df.attrs["excluded"] = excluded
 
     if verbose:
         print(f"Rotation vs {benchmark} (lookback={lookback_days}d, recent={short_days}d)\n")
+        for t, why in excluded.items():
+            print(f"  excluded {t}: {why}")
+        if excluded:
+            print()
         def show(title, rows):
             print(title)
             for tkr, r in rows.iterrows():
