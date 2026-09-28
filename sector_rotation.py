@@ -10,7 +10,7 @@ Usage:
     find_sector_rotation()                                   # 11 GICS sectors vs SPY
     find_sector_rotation(universe="industries")              # ~30 industry ETFs vs SPY
     find_sector_rotation(universe="tech", benchmark="XLK")   # inside tech: semis vs software vs AI...
-    find_sector_rotation(universe="sectors+tech")            # 11 sectors + tech breakdown, vs SPY
+    find_sector_rotation(universe="sectors+tech")            # 10 other sectors + tech breakdown (no XLK), vs SPY
 
     # Your own themes as equal-weight baskets (best way to isolate "AI"):
     find_sector_rotation(
@@ -61,9 +61,11 @@ UNIVERSES = {
     "sectors": SECTOR_ETFS,
     "tech": TECH_SUBSECTORS,
     "industries": INDUSTRY_ETFS,
-    # 11 sectors AND the tech breakdown in one table (XLK sits next to its own sub-industries;
-    # use benchmark="SPY" so every line means the same thing)
-    "sectors+tech": {**SECTOR_ETFS, **TECH_SUBSECTORS},
+    # The 10 non-tech sectors plus the tech breakdown, in one table. XLK is deliberately left
+    # out: it already contains the semis, software, etc. lines, so ranking the parent next to
+    # its own children double-counts. (Use universe="sectors" if you want XLK as one line.)
+    # Use benchmark="SPY" so every line means the same thing.
+    "sectors+tech": {**{k: v for k, v in SECTOR_ETFS.items() if k != "XLK"}, **TECH_SUBSECTORS},
 }
 
 
