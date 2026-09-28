@@ -1,4 +1,4 @@
-name: check sectors
+name: Check Sectors
 
 # This allows you to run it manually with a button click
 on:
