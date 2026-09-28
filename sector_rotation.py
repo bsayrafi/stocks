@@ -215,4 +215,4 @@ def find_sector_rotation(
 if __name__ == "__main__":
     pd.set_option("display.float_format", lambda v: f"{v:.3f}")
     pd.set_option("display.width", 200)
-    print(find_sector_rotation(universe="tech", benchmark="XLK"))
+    print(find_sector_rotation(universe="sectors", benchmark="XLK"))
