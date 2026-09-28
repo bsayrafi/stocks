@@ -32,6 +32,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import html
+import re
 import os
 import requests
 import datetime as dt
@@ -2510,7 +2511,7 @@ def render_ticker_html(report: dict) -> str:
         soft_rows += f"""
         <tr><td>{html.escape(label)}</td><td>{_badge(signal[key])}</td></tr>"""
 
-    return f"""
+    card = f"""
     <section class="card">
       <div class="card-header">
         <h2>{html.escape(report['ticker'])}</h2>
@@ -2556,6 +2557,9 @@ def render_ticker_html(report: dict) -> str:
       {fundamentals_block}
       {analyst_block}
     </section>"""
+    # every section heading ends with the ticker, e.g. "Other levels - AMD"
+    tk = html.escape(report["ticker"])
+    return re.sub(r"<h3>(.*?)</h3>", lambda m: f"<h3>{m.group(1)} - {tk}</h3>", card, flags=re.S)
 
 
 def build_html_report(title: str, ticker_sections_html: str) -> str:
