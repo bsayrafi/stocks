@@ -65,8 +65,8 @@ large_enrichment_tickers = [
 
 debug_enrichment_tickers = [
 
-    "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", 
-    "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO",
+   "CTRI", "ARLO", "AMZN", "SOFI", "QBTS", "COHR", "ATEN", "ONTO", 
+    "PONY", "TYL", "ATRO", "IREN", "VST", "KLAC", "HIVE",
     ]
 
 def run_enrichment(num, runtype="all"):
