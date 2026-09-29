@@ -333,6 +333,9 @@ CONFIGH = {
     # APCA_API_SECRET_KEY environment variables.
     "PREMARKET_ENABLED": True,
     "PREMARKET_START": "04:00",    # pre-market session start, MARKET_TZ
+    "AFTERHOURS_END": "20:00",     # after-hours session end (MARKET_TZ); overnight runs from here to PREMARKET_START
+    "OVERNIGHT_ENABLED": True,     # overnight (20:00-04:00 ET) price from Blue Ocean ATS via Alpaca
+    "OVERNIGHT_FEED": "boats",     # Alpaca feed for overnight bars (historical must be "boats")
     "ALPACA_FEED": "auto",         # "auto" = pick SIP or IEX (see get_best_pre_market_price),
                                    # "sip" = all exchanges, delayed; "iex" = live but IEX-only
     "ALPACA_SIP_DELAY_MIN": 16,    # free plan: SIP must be >=15 min old; 0 if you pay for live SIP
@@ -659,28 +662,24 @@ def _alpaca_headers(headers: dict | None) -> dict | None:
     return headers
 
 
-def _alpaca_premarket_bars_multi(tickers: list, headers: dict | None, feed: str, delay_minutes: int = 0,
-                                 tz: str = "America/New_York", start_hhmm: str = "04:00",
-                                 open_hhmm: str = "09:30", timeout: float = 15.0,
-                                 chunk: int = 100) -> dict | None:
-    """1-minute bars for TODAY's pre-market session for MANY tickers at once, on
-    one Alpaca feed, from start_hhmm up to min(now - delay_minutes, open_hhmm).
-    Uses Alpaca's multi-symbol endpoint: one request per `chunk` tickers (plus
-    extra pages when there are more than 10,000 bars), instead of one per ticker.
-    Returns {ticker: [{"t": Timestamp (exchange tz), "c": close, "v": volume}, ...]}
-    (a ticker with no pre-market trades gets []), or None on error / missing keys."""
+def _alpaca_bars_window_multi(tickers: list, headers: dict | None, feed: str,
+                              start: pd.Timestamp, end: pd.Timestamp, delay_minutes: int = 0,
+                              tz: str = "America/New_York", timeout: float = 15.0,
+                              chunk: int = 100) -> dict | None:
+    """1-minute bars for MANY tickers between `start` and `end` on one Alpaca feed,
+    with `end` clipped to (now - delay_minutes) - e.g. the free plan's 15-min SIP
+    and overnight (boats) delay. Multi-symbol endpoint: one request per `chunk`
+    tickers (plus extra pages when there are more than 10,000 bars).
+    Returns {ticker: [{"t": Timestamp (exchange tz), "c", "v", "n"}, ...]} ([] = no
+    trades / window not reached yet), or None on error / missing keys."""
     headers = _alpaca_headers(headers)
     if headers is None:
         return None
     now = pd.Timestamp.now(tz=tz)
-    sh, sm = map(int, start_hhmm.split(":"))
-    oh, om = map(int, open_hhmm.split(":"))
-    start = now.normalize() + pd.Timedelta(hours=sh, minutes=sm)
-    latest_allowed = (now - pd.Timedelta(minutes=delay_minutes)).floor("min")
-    end = min(latest_allowed, now.normalize() + pd.Timedelta(hours=oh, minutes=om))
+    end = min(end, (now - pd.Timedelta(minutes=delay_minutes)).floor("min"))
     out = {t: [] for t in tickers}
     if end <= start:
-        return out  # today's pre-market hasn't started yet (or is still inside the delay)
+        return out
 
     # Yahoo writes share classes as BRK-B, Alpaca as BRK.B
     to_alpaca = {t: t.replace("-", ".") for t in tickers}
@@ -699,18 +698,199 @@ def _alpaca_premarket_bars_multi(tickers: list, headers: dict | None, feed: str,
                 for sym, bars in (body.get("bars") or {}).items():
                     t = from_alpaca.get(sym, sym)
                     out.setdefault(t, []).extend(
-                        {"t": pd.Timestamp(b["t"]).tz_convert(tz), "c": float(b["c"]), "v": float(b.get("v", 0))}
+                        {"t": pd.Timestamp(b["t"]).tz_convert(tz), "c": float(b["c"]),
+                         "v": float(b.get("v", 0)), "n": int(b.get("n", 0) or 0)}
                         for b in bars)
                 token = body.get("next_page_token")
                 if not token:
                     break
                 params["page_token"] = token
     except (requests.RequestException, ValueError) as e:
-        print(f"  pre-market bars unavailable ({feed}, batch): {e}")
+        print(f"  Alpaca bars unavailable ({feed}, {start:%a %H:%M}-{end:%a %H:%M} ET): {e}")
         return None
     for t in out:
         out[t].sort(key=lambda b: b["t"])
     return out
+
+
+def _alpaca_premarket_bars_multi(tickers: list, headers: dict | None, feed: str, delay_minutes: int = 0,
+                                 tz: str = "America/New_York", start_hhmm: str = "04:00",
+                                 open_hhmm: str = "09:30", timeout: float = 15.0,
+                                 chunk: int = 100) -> dict | None:
+    """1-minute bars for TODAY's pre-market session (start_hhmm to open_hhmm) for
+    many tickers - see _alpaca_bars_window_multi."""
+    now = pd.Timestamp.now(tz=tz)
+    sh, sm = map(int, start_hhmm.split(":"))
+    oh, om = map(int, open_hhmm.split(":"))
+    return _alpaca_bars_window_multi(
+        tickers, headers, feed, now.normalize() + pd.Timedelta(hours=sh, minutes=sm),
+        now.normalize() + pd.Timedelta(hours=oh, minutes=om), delay_minutes, tz, timeout, chunk)
+
+
+# ---------------------------------------------------------------- extended hours
+# Close (last completed regular session) -> after-hours (16:00-20:00 that day)
+# -> overnight (20:00 to 04:00 of the next session, Blue Ocean ATS) -> pre-market
+# (04:00-09:30 of the next session). Session dates come from the price data, so
+# weekends and market holidays are handled.
+
+def _hhmm_td(hhmm: str) -> pd.Timedelta:
+    h, m = map(int, hhmm.split(":"))
+    return pd.Timedelta(hours=h, minutes=m)
+
+
+def session_calendar(ref_hourly: pd.DataFrame | None, cfg: dict, now: pd.Timestamp | None = None) -> dict:
+    """Work out which sessions matter right now.
+      close_date = last COMPLETED regular session (from the hourly data)
+      next_date  = the session the pre-market belongs to (today, or the next weekday)
+      market_open = regular hours are running right now
+    plus the after-hours / overnight / pre-market windows as exchange-time Timestamps."""
+    tz = cfg.get("MARKET_TZ", "America/New_York")
+    now = now if now is not None else pd.Timestamp.now(tz=tz)
+    today = now.date()
+    day0 = now.normalize()
+    open_td, close_td = _hhmm_td(cfg.get("MARKET_OPEN", "09:30")), _hhmm_td(cfg.get("MARKET_CLOSE", "16:00"))
+    ah_end_td = _hhmm_td(cfg.get("AFTERHOURS_END", "20:00"))
+    pm_start_td = _hhmm_td(cfg.get("PREMARKET_START", "04:00"))
+
+    dates = []
+    if ref_hourly is not None and not ref_hourly.empty:
+        ix = ref_hourly.index.tz_convert(tz) if ref_hourly.index.tz is not None else ref_hourly.index
+        dates = sorted(set(ix.date))
+    in_regular = now.weekday() < 5 and day0 + open_td <= now < day0 + close_td
+    market_open = bool(in_regular and dates and dates[-1] == today)
+
+    if dates:
+        close_date = dates[-1]
+        if close_date == today and now < day0 + close_td:     # today's session not finished
+            close_date = dates[-2] if len(dates) > 1 else close_date
+    else:                                                      # no data: previous weekday
+        d = today - dt.timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= dt.timedelta(days=1)
+        close_date = d
+
+    if today > close_date and today.weekday() < 5:
+        next_date = today
+    else:
+        next_date = max(close_date, today) + dt.timedelta(days=1)
+        while next_date.weekday() >= 5:
+            next_date += dt.timedelta(days=1)
+
+    c0 = pd.Timestamp(close_date).tz_localize(tz)
+    n0 = pd.Timestamp(next_date).tz_localize(tz)
+    return {
+        "now": now, "market_open": market_open,
+        "close_date": close_date, "next_date": next_date,
+        "ah": (c0 + close_td, c0 + ah_end_td),
+        "on": (c0 + ah_end_td, n0 + pm_start_td),
+        "pm": (n0 + pm_start_td, n0 + open_td),
+    }
+
+
+def _single_feed_details(bars: list, feed: str, reason: str) -> dict:
+    return {"price": round(bars[-1]["c"], 2) if bars else None,
+            "time": bars[-1]["t"].strftime("%H:%M") if bars else None,
+            "day": bars[-1]["t"].strftime("%a") if bars else None,
+            "source": feed if bars else None, "reason": reason,
+            "trades": sum(b.get("n", 0) for b in bars), "volume": sum(b.get("v", 0) for b in bars)}
+
+
+@_profiled("extended hours (Alpaca batch, all tickers)")
+def prefetch_extended_hours(tickers: list, cfg: dict, hourly_by_ticker: dict | None = None) -> dict | None:
+    """After-hours, overnight and pre-market prices for ALL tickers in a few
+    batched Alpaca requests (about 5 per 100 tickers, plus pages).
+      after-hours / pre-market: SIP (all exchanges, ~16 min delayed on the free
+        plan) vs live IEX, chosen as in get_best_pre_market_price (ALPACA_FEED="auto"),
+        or one fixed feed ("sip"/"iex").
+      overnight: OVERNIGHT_FEED (Blue Ocean ATS "boats"), 16 min delayed.
+    Returns {"calendar": session_calendar(...), "by_ticker": {t: {"ah": d, "on": d,
+    "pm": d}}} where d = {"price", "time", "source", "reason", "status", ...}, or
+    None if disabled / no Alpaca keys."""
+    if not cfg.get("PREMARKET_ENABLED", True) or _alpaca_headers(cfg.get("ALPACA_HEADERS")) is None:
+        return None
+    tz = cfg.get("MARKET_TZ", "America/New_York")
+    ref = None
+    for df in (hourly_by_ticker or {}).values():   # the ticker with the most recent data
+        if df is not None and not df.empty and (ref is None or df.index[-1] > ref.index[-1]):
+            ref = df
+    cal = session_calendar(ref, cfg)
+    now = cal["now"]
+    headers, delay = cfg.get("ALPACA_HEADERS"), cfg.get("ALPACA_SIP_DELAY_MIN", 16)
+    feed = cfg.get("ALPACA_FEED", "auto")
+    move, gap = cfg.get("PREMARKET_MOVE_PCT", 0.3), cfg.get("PREMARKET_IEX_MAX_GAP_PCT", 0.5)
+
+    def status(win, bars):
+        if win[0] > now:
+            return "not started yet"
+        return "ok" if bars else "no trades"
+
+    def two_feed(win):
+        if win[0] > now:
+            return None, None
+        if feed == "auto":
+            return (_alpaca_bars_window_multi(tickers, headers, "sip", *win, delay, tz),
+                    _alpaca_bars_window_multi(tickers, headers, "iex", *win, 0, tz))
+        return (_alpaca_bars_window_multi(tickers, headers, feed, *win, delay if feed == "sip" else 0, tz), None)
+
+    by_ticker = {t: {} for t in tickers}
+    for key in ("ah", "pm"):
+        win = cal[key]
+        a, b = two_feed(win)
+        for t in tickers:
+            if feed == "auto":
+                d = _choose_pre_market((a or {}).get(t), (b or {}).get(t), move, gap)
+            else:
+                d = _single_feed_details((a or {}).get(t) or [], feed, "fixed feed (ALPACA_FEED)")
+            d["status"] = ("unavailable" if win[0] <= now and a is None and b is None
+                           else status(win, d.get("price")))
+            by_ticker[t][key] = d
+
+    on_win = cal["on"]
+    on_feed = cfg.get("OVERNIGHT_FEED", "boats")
+    on_bars = (_alpaca_bars_window_multi(tickers, headers, on_feed, *on_win, delay, tz)
+               if cfg.get("OVERNIGHT_ENABLED", True) and on_win[0] <= now else None)
+    for t in tickers:
+        bars = (on_bars or {}).get(t) or []
+        d = _single_feed_details(bars, on_feed, "Blue Ocean ATS (thin, ~16 min delayed)")
+        d["status"] = ("disabled" if not cfg.get("OVERNIGHT_ENABLED", True)
+                       else "not started yet" if on_win[0] > now
+                       else "unavailable" if on_bars is None else status(on_win, bars))
+        by_ticker[t]["on"] = d
+    return {"calendar": cal, "by_ticker": by_ticker}
+
+
+def extended_hours_for_ticker(ext_batch: dict | None, ticker: str, hourly: pd.DataFrame, cfg: dict) -> dict | None:
+    """Per-ticker view: the regular close it's all measured against, each
+    session's price and % vs that close, and the "current" price (latest of
+    after-hours / overnight / pre-market) - None while regular hours are open."""
+    if not ext_batch:
+        return None
+    cal = ext_batch["calendar"]
+    tz = cfg.get("MARKET_TZ", "America/New_York")
+    ix = hourly.index.tz_convert(tz) if hourly.index.tz is not None else hourly.index
+    upto = hourly[np.asarray(ix.date) <= cal["close_date"]]
+    if upto.empty:
+        return None
+    close_px = round(float(upto["Close"].iloc[-1]), 2)
+    close_day = (upto.index[-1].tz_convert(tz) if upto.index.tz is not None else upto.index[-1]).date()
+    sessions = {}
+    for key in ("ah", "on", "pm"):
+        d = dict((ext_batch["by_ticker"].get(ticker) or {}).get(key) or {})
+        if d.get("price") is not None and close_px:
+            d["pct"] = round((d["price"] / close_px - 1) * 100, 2)
+        sessions[key] = d
+    current = None
+    if not cal["market_open"]:
+        for key in ("pm", "on", "ah"):           # most recent session with a price
+            if sessions[key].get("price") is not None:
+                current = {"price": sessions[key]["price"], "session": key,
+                           "time": sessions[key].get("time"), "pct": sessions[key].get("pct")}
+                break
+    return {"close": close_px, "close_date": close_day, "market_open": cal["market_open"],
+            "sessions": sessions, "current": current}
+
+
+_SESSION_NAMES = {"ah": "after-hours", "on": "overnight", "pm": "pre-market"}
 
 
 def _alpaca_premarket_bars(ticker: str, headers: dict | None, feed: str, delay_minutes: int = 0,
@@ -1320,7 +1500,7 @@ def generate_signal(daily: dict, h4: dict, h1: dict, h1_macd_ok: bool, vol_ok: b
 
 def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
                hourly: pd.DataFrame | None = None, social_table: dict | None = None,
-               pre_market_batch: dict | None = None) -> dict:
+               ext_batch: dict | None = None) -> dict:
     """Fetch data and compute everything needed for one ticker's report.
     Pure computation - no printing - so the same result can feed both the
     console output and the HTML report."""
@@ -1415,32 +1595,17 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
 
-    pre_market, pre_market_time, pre_market_info = None, None, None
-    if cfg.get("PREMARKET_ENABLED", True) and pre_market_batch is not None:
-        # fetched for all tickers at once in main() - see prefetch_pre_market()
-        pre_market_info = pre_market_batch.get(cfg["TICKER"])
-        if pre_market_info and pre_market_info.get("price") is not None:
-            pre_market, pre_market_time = pre_market_info["price"], pre_market_info["time"]
-        else:
-            pre_market_info = None
-    elif cfg.get("PREMARKET_ENABLED", True):
-        feed = cfg.get("ALPACA_FEED", "auto")
-        pm_kw = dict(tz=cfg.get("MARKET_TZ", "America/New_York"),
-                     start_hhmm=cfg.get("PREMARKET_START", "04:00"), open_hhmm=cfg.get("MARKET_OPEN", "09:30"))
-        if feed == "auto":
-            pre_market_info = get_best_pre_market_price(
-                cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"),
-                sip_delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16),
-                move_pct=cfg.get("PREMARKET_MOVE_PCT", 0.3),
-                max_iex_gap_pct=cfg.get("PREMARKET_IEX_MAX_GAP_PCT", 0.5), with_details=True, **pm_kw)
-            pre_market, pre_market_time = pre_market_info["price"], pre_market_info["time"]
-        else:
-            pre_market, pre_market_time = get_pre_market_price(
-                cfg["TICKER"], headers=cfg.get("ALPACA_HEADERS"), feed=feed,
-                delay_minutes=cfg.get("ALPACA_SIP_DELAY_MIN", 16) if feed == "sip" else 0,
-                with_time=True, **pm_kw)
-            if pre_market is not None:
-                pre_market_info = {"source": feed, "reason": "fixed feed (ALPACA_FEED)"}
+    # ---- close / after-hours / overnight / pre-market (Alpaca). main() fetches all
+    # tickers in one batch; a single run_screen() call fetches just this ticker.
+    ext = None
+    if cfg.get("PREMARKET_ENABLED", True):
+        if ext_batch is None:   # standalone call (not from main) - fetch just this ticker
+            ext_batch = prefetch_extended_hours([cfg["TICKER"]], cfg, {cfg["TICKER"]: hourly})
+        ext = extended_hours_for_ticker(ext_batch, cfg["TICKER"], hourly, cfg)
+    pm = (ext or {}).get("sessions", {}).get("pm") or {}
+    pre_market = pm.get("price")
+    pre_market_time = pm.get("time")
+    pre_market_info = pm if pre_market is not None else None
 
     # The channel is always computed because its slope decides whether the ticker
     # goes to the _up or _down report; LRC_ENABLED only controls whether it's shown.
@@ -1544,6 +1709,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         "trend_dir": trend_dir,
         "trend_reason": trend_reason,
         "pre_market": pre_market,
+        "ext": ext,
         "pre_market_time": pre_market_time,
         "pre_market_info": pre_market_info,
         "news": news,
@@ -1583,10 +1749,14 @@ def print_report(report: dict) -> None:
     if report.get("vwap") is not None:
         side = "above" if report["above_vwap"] else "below"
         print(f"Session VWAP: {report['vwap']} (price {side} VWAP)")
-    if report.get("pre_market") is not None:
-        info = report.get("pre_market_info") or {}
-        print(f"Pre-market price: {report['pre_market']} (as of {report.get('pre_market_time')} ET, "
-              f"{str(info.get('source', '')).upper()}: {info.get('reason', '')})")
+    ext = report.get("ext")
+    if ext:
+        line = f"Close {ext['close']:.2f} ({ext['close_date']})"
+        for key, label in (("ah", "after-hours"), ("on", "overnight"), ("pm", "pre-market")):
+            d = ext["sessions"].get(key) or {}
+            line += (f" | {label} {d['price']:.2f} ({d['pct']:+.2f}%)" if d.get("price") is not None
+                     else f" | {label} {d.get('status', 'N/A')}")
+        print(line + ("" if not ext.get("current") else f" | current = {_SESSION_NAMES[ext['current']['session']]}"))
     st = report.get("hhhl")
     if st:
         print(f"HH/HL days (last {st['window']} completed): {st['up_days']} up / {st['down_days']} down / "
@@ -1762,7 +1932,8 @@ def render_price_chart_svg(report: dict) -> str:
     # ---- horizontal levels
     levels = [
         ("Target", report.get("take_profit"), "lvl-target"),
-        ("Pre-mkt", report.get("pre_market"), "lvl-premkt"),
+        (f"Current {((report.get('ext') or {}).get('current') or {}).get('session', '').upper()}",
+         ((report.get("ext") or {}).get("current") or {}).get("price"), "lvl-premkt"),
         ("POC", report.get("poc"), "lvl-poc"),
         ("Support", report.get("entry_support"), "lvl-support"),
         ("Stop", report.get("stop"), "lvl-stop"),
@@ -1931,8 +2102,9 @@ def render_price_chart_svg(report: dict) -> str:
     parts.append(f'<circle class="last" cx="{x(n - 1):.1f}" cy="{y(last_c):.1f}" r="3"/>')
 
     lrc_legend = ' <i class="sw lrc-sw"></i>Reg. channel' if lrc else ""
-    if report.get("pre_market") is not None:
-        lrc_legend = ' <i class="sw premkt-sw"></i>Pre-market' + lrc_legend
+    cur = (report.get("ext") or {}).get("current")
+    if cur:
+        lrc_legend = f' <i class="sw premkt-sw"></i>Current price ({_SESSION_NAMES[cur["session"]]})' + lrc_legend
     first_o = float(df["Open"].iloc[0])
     chg = (last_c / first_o - 1) * 100 if first_o else 0.0
     chg_cls = "pass" if chg >= 0 else "fail"
@@ -1994,8 +2166,9 @@ def render_daily_chart_svg(report: dict) -> str:
         levels.append((f"T {tgt['r']:g}R", tgt["price"], "lvl-target"))
     for k, lvl in enumerate((dsr.get("supports") or [])[:2]):
         levels.append((f"S{k + 1} x{lvl['touches']}", lvl["price"], "lvl-support" if k == 0 else "lvl-support2"))
-    if report.get("pre_market") is not None:   # same yellow dotted line as on the 1h chart
-        levels.append(("Pre-mkt", report["pre_market"], "lvl-premkt"))
+    cur = (report.get("ext") or {}).get("current")
+    if cur:   # same yellow dotted "current price" line as on the 1h chart (not during regular hours)
+        levels.append((f"Current {cur['session'].upper()}", cur["price"], "lvl-premkt"))
     levels += [
               ("Stop", report.get("stop"), "lvl-stop")]
     levels = [(lbl, float(v), cls) for lbl, v, cls in levels if v is not None and pd.notna(v)]
@@ -2124,7 +2297,7 @@ def render_daily_chart_svg(report: dict) -> str:
           <span class="badge {'pass' if chg >= 0 else 'fail'}">{chg:+.2f}%</span>
           <span class="legend">{' '.join(legend)}
             <i class="sw lvl-support"></i>Support S1/S2 <i class="sw lvl-target"></i>Target T1/T2
-            <i class="sw lvl-stop"></i>Stop{' <i class="sw premkt-sw"></i>Pre-market' if report.get("pre_market") is not None else ""}
+            <i class="sw lvl-stop"></i>Stop{f' <i class="sw premkt-sw"></i>Current price ({_SESSION_NAMES[cur["session"]]})' if cur else ""}
             <span class="hhhl-mark up">&#9650;</span>HH+HL <span class="hhhl-mark down">&#9660;</span>LH+LL</span>
         </div>
         <svg class="price-chart" viewBox="0 0 {W} {H}"
@@ -2237,6 +2410,32 @@ def _near_sr_rows(report: dict) -> list:
     return rows
 
 
+def _extended_hours_rows(report: dict) -> list:
+    """Close / After-hours / Overnight / Pre-market rows, each vs the close."""
+    ext = report.get("ext")
+    if not ext:
+        return [("Close / extended hours", "N/A (no Alpaca data)")]
+    rows = [(f"Close ({pd.Timestamp(ext['close_date']).strftime('%a %d %b')})", f"{ext['close']:.2f}")]
+    src_names = {"sip": "SIP (all exchanges, ~16 min delayed)", "iex": "IEX live", "boats": "Blue Ocean ATS"}
+    for key, label in (("ah", "After-hours"), ("on", "Overnight"), ("pm", "Pre-market")):
+        d = ext["sessions"].get(key) or {}
+        if d.get("price") is None:
+            rows.append((label, f'<span class="muted-small">{html.escape(d.get("status") or "N/A")}</span>'))
+            continue
+        pct_cls = "pass" if d.get("pct", 0) >= 0 else "fail"
+        main_txt = (f"{d['price']:.2f} @ {d.get('time')} ET "
+                    f"<span class=\"badge {pct_cls}\">{d.get('pct', 0):+.2f}%</span>")
+        if key == "on":
+            note = f"{d.get('trades', 0)} trades, {d.get('volume', 0):,.0f} shares - Blue Ocean ATS (thin)"
+        else:
+            note = f"{src_names.get(d.get('source'), d.get('source'))} - {d.get('reason', '')}"
+            other = ("sip" if d.get("source") == "iex" else "iex")
+            if d.get(f"{other}_price") is not None:
+                note += f" | {other.upper()} {d[f'{other}_price']:.2f} @ {d[f'{other}_time']}"
+        rows.append((label, main_txt + f'<br><span class="muted-small">{html.escape(note)}</span>'))
+    return rows
+
+
 def _target_r_html(report: dict) -> str:
     tgt = (report.get("day_sr") or {}).get("target") or {}
     if tgt.get("r") is None:
@@ -2293,11 +2492,7 @@ def render_ticker_html(report: dict) -> str:
                             f"{today_range['day_high'] - atr_d:.2f} - {today_range['day_low'] + atr_d:.2f}"))
 
     other_items += [
-        ("Pre-market price", (
-            f"{report['pre_market']:.2f} @ {report.get('pre_market_time')} ET "
-            f"({(report['pre_market'] / price - 1) * 100:+.2f}% vs last close)"
-            + (f"<br><span class=\"muted-small\">{pm_src_html}</span>" if pm_src_html else "")
-            if report.get("pre_market") is not None else "N/A")),
+        *_extended_hours_rows(report),
         _premarket_near_row(report),
         *([(f"Anchored VWAP (from {report['avwap']['anchor_type']} of {report['avwap']['anchor_date']})",
              f"{report['avwap']['value']} " + ("" if report['avwap']['above'] is None
@@ -2812,16 +3007,25 @@ def report_to_row(report: dict, report_group: str) -> dict:
         "current_price": report["current_price"],
     }
 
-    # --- pre-market
-    pm = report.get("pre_market_info") or {}
-    pre = report.get("pre_market")
+    # --- close + extended hours (each % is vs the close)
+    ext = report.get("ext") or {}
+    ses = ext.get("sessions") or {}
+    cur = ext.get("current") or {}
     row.update({
-        "pre_market": pre,
-        "pre_market_time_et": report.get("pre_market_time"),
-        "pre_market_source": pm.get("source"),
-        "pre_market_gap_pct": round((pre / report["current_price"] - 1) * 100, 2) if pre else None,
-        "pre_market_reason": pm.get("reason") if pre else None,
+        "close_price": ext.get("close"),
+        "close_date": ext["close_date"].isoformat() if ext.get("close_date") else None,
+        "market_open": ext.get("market_open"),
     })
+    for key, pre in (("ah", "after_hours"), ("on", "overnight"), ("pm", "pre_market")):
+        d = ses.get(key) or {}
+        row[pre] = d.get("price")
+        row[f"{pre}_time_et"] = d.get("time")
+        row[f"{pre}_pct"] = d.get("pct")
+        row[f"{pre}_source"] = d.get("source")
+        if key == "on":
+            row["overnight_trades"] = d.get("trades")
+    row["current_ext_price"] = cur.get("price")
+    row["current_ext_session"] = _SESSION_NAMES.get(cur.get("session")) if cur else None
 
     # --- signal breakdown
     row["hard_requirements_met"] = sig["hard_requirements_met"]
@@ -3007,13 +3211,14 @@ def main(tickers, fileapp):
     prune_cache()
     sp500_members = daily_cached("sp500", "all", lambda: _get_sp500_membership(verbose=False))
     social_table = fetch_apewisdom_table()   # once per run (mentions change intraday, so not cached)
-    pre_market_batch = prefetch_pre_market(tickers, CONFIGH)   # 2 batched Alpaca requests, not 2 per ticker
 
     try:
         prefetched = prefetch_hourly_data(tickers, CONFIGH["PERIOD"], CONFIGH["INTERVAL"])
     except Exception as e:
         print(f"batch download failed ({type(e).__name__}: {e}) - falling back to one download per ticker")
         prefetched = {}
+    # after-hours + overnight + pre-market for all tickers: ~5 batched Alpaca requests
+    ext_batch = prefetch_extended_hours(tickers, CONFIGH, prefetched)
 
     def screen_one(ticker):
         """Runs in a worker thread. Returns (status, direction_or_reason, html, csv_row)."""
@@ -3021,7 +3226,7 @@ def main(tickers, fileapp):
             t0 = time.perf_counter()
             report = run_screen(ticker, CONFIGH, sp500_members=sp500_members,
                                 hourly=prefetched.get(ticker), social_table=social_table,
-                                pre_market_batch=pre_market_batch)
+                                ext_batch=ext_batch if ext_batch is not None else {})
             elapsed = time.perf_counter() - t0
             _prof_add("whole ticker (run_screen)", ticker, elapsed)
             fetched = sum(sec for step, calls in list(PROFILE.items())
