@@ -1,65 +1,13 @@
 
 
-#!/usr/bin/env python3
-"""
-Usage:
-    export FINNHUB_API_KEY="dafflm1r01quvmmfau5gdafflm1r01quvmmfau60"
-    python premarket.py AAPL TSLA
-"""
-import os
-import sys
-from datetime import datetime
-from zoneinfo import ZoneInfo
-import finnhub
-
 import requests
 
-API_KEY = "dafflm1r01quvmmfau5gdafflm1r01quvmmfau60"
-URL = "https://finnhub.io/api/v1/quote"
-ET = ZoneInfo("America/New_York")
+headers = {"APCA-API-KEY-ID": "PK5FRKKKJACZKSNRT4L4YLEZZ2", "APCA-API-SECRET-KEY": "EZ3b13FvSr3cBK4NZ67MYLkJ4VTJjV6QpMY8KqL637gr"}
+print ("Alpaca headers:", headers)
 
 
-def session_label(ts_et: datetime) -> str:
-    if ts_et.weekday() >= 5:
-        return "weekend"
-    m = ts_et.hour * 60 + ts_et.minute
-    if 240 <= m < 570:
-        return "PRE-MARKET"
-    if 570 <= m < 960:
-        return "regular"
-    if 960 <= m < 1200:
-        return "after-hours"
-    return "closed"
-
-
-def get_quote(symbol: str) -> None:
-    r = requests.get(URL, params={"symbol": symbol.upper(), "token": API_KEY}, timeout=15)
-    r.raise_for_status()
-    q = r.json()
-
-    if not q or q.get("t", 0) == 0:
-        print(f"{symbol.upper()}: no data")
-        return
-
-    price, prev_close = q["c"], q["pc"]
-    change = price - prev_close
-    pct = (change / prev_close * 100) if prev_close else 0.0
-    ts = datetime.fromtimestamp(q["t"], tz=ET)
-
-    print(f"{symbol.upper()}")
-    print(f"  Last price : {price:.2f}")
-    print(f"  Prev close : {prev_close:.2f}")
-    print(f"  Change     : {change:+.2f} ({pct:+.2f}%)")
-    print(f"  As of      : {ts:%Y-%m-%d %H:%M:%S %Z}  [{session_label(ts)}]")
-
-
-def main() -> None:
-
-            get_quote("AAPL")
-
-
-
-if __name__ == "__main__":
-    main()
-
-
+r = requests.get("https://data.alpaca.markets/v2/stocks/bars",
+                 headers=headers,  # your Alpaca headers
+                 params={"symbols": "AAPL", "timeframe": "1Hour", "feed": "boats",
+                         "start": "2026-09-25T00:00:00Z", "end": "2026-09-26T00:00:00Z"})
+print(r.status_code, r.text[:200])
