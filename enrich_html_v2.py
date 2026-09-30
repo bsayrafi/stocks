@@ -2267,9 +2267,11 @@ def prev_session(daily: pd.DataFrame, in_progress: bool):
     if len(d) < abs(pos):
         return None
     r = d.iloc[pos]
+    before = d.iloc[pos - 1]["Close"] if len(d) > abs(pos) else None      # close of the session before it
     return {"date": d.index[pos].date().isoformat(), "open": round(float(r["Open"]), 2),
             "high": round(float(r["High"]), 2), "low": round(float(r["Low"]), 2),
-            "close": round(float(r["Close"]), 2)}
+            "close": round(float(r["Close"]), 2),
+            "prior_close": None if before is None else round(float(before), 2)}
 
 
 def signal_badge_text(signal: dict) -> str:
@@ -3655,9 +3657,12 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .card {{ scroll-margin-top: 12px; }}
   a.tk {{ color: var(--accent); font-weight: 700; text-decoration: none; }}
   a.tk:hover {{ text-decoration: underline; }}
-  #tk-tip {{ position: fixed; z-index: 9999; display: none; pointer-events: none; background: #0d1017; border: 1px solid #3a4560; border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.65; color: #dfe6f0; box-shadow: 0 8px 24px rgba(0,0,0,0.55); max-width: 380px; }}
+  #tk-tip {{ position: fixed; z-index: 9999; display: none; pointer-events: none; background: #0d1017; border: 1px solid #3a4560; border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.65; color: #dfe6f0; box-shadow: 0 8px 24px rgba(0,0,0,0.55); max-width: 520px; }}
   #tk-tip b {{ color: #ffffff; font-size: 13px; }}
   #tk-tip .k {{ color: #8b97ab; }}
+  #tk-tip .pos {{ color: var(--pass); font-weight: 700; }}
+  #tk-tip .neg {{ color: var(--fail); font-weight: 700; }}
+  #tk-tip .badge {{ margin-left: 4px; }}
   #tk-tip .sep {{ border-top: 1px solid #2c3550; margin: 6px 0; }}
   .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }}
   .summary-table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
@@ -3902,7 +3907,8 @@ def report_to_row(report: dict, report_group: str) -> dict:
     row["current_ext_pct"] = cur.get("pct") if cur else None
     pdy = report.get("prev_day") or {}
     row.update({"prev_day_date": pdy.get("date"), "prev_day_open": pdy.get("open"), "prev_day_high": pdy.get("high"),
-                "prev_day_low": pdy.get("low"), "prev_day_close": pdy.get("close")})
+                "prev_day_low": pdy.get("low"), "prev_day_close": pdy.get("close"),
+                "prev_day_prior_close": pdy.get("prior_close")})
 
     # --- setup signal breakdown
     ctx = sig["context"]
@@ -4107,13 +4113,17 @@ def _ticker_tip(r: dict) -> str:
     if g("market_open") is False and g("current_ext_price") is not None:
         label = _TIP_SESSIONS.get(g("current_ext_session"), "Extended hours")
         pct = g("current_ext_pct")
-        out.append(line(f"{label}:", f"{float(g('current_ext_price')):,.2f}" + (f"  ({pct:+.2f}% vs close)" if pct is not None else "")))
+        badge = (f' <span class="badge {"pass" if pct >= 0 else "fail"}">{pct:+.2f}%</span> vs close'
+                 if pct is not None else "")
+        out.append(f'<div><span class="k">{label}:</span> {float(g("current_ext_price")):,.2f}{badge}</div>')
     elif price is not None:
         out.append(line("Market open:" if g("market_open") else "Last price:", f"{float(price):,.2f}"))
     if g("prev_day_open") is not None:
-        out.append(line(f"Prev day ({g('prev_day_date')}):",
-                        f"O {g('prev_day_open'):,.2f}  ·  H {g('prev_day_high'):,.2f}  ·  "
-                        f"L {g('prev_day_low'):,.2f}  ·  C {g('prev_day_close'):,.2f}"))
+        c, prior = g("prev_day_close"), g("prev_day_prior_close")
+        cls = "" if prior is None or c == prior else ("pos" if c > prior else "neg")   # closed higher / lower than the day before
+        out.append(f'<div style="white-space:nowrap"><span class="k">Prev day ({html.escape(str(g("prev_day_date")))}):</span> '
+                   f'O {g("prev_day_open"):,.2f} &middot; H {g("prev_day_high"):,.2f} &middot; '
+                   f'L {g("prev_day_low"):,.2f} &middot; C <span class="{cls}">{c:,.2f}</span></div>')
     return "".join(out)
 
 
