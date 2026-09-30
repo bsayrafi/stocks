@@ -31,34 +31,41 @@ os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 
 small_enrichment_tickers = [
-   "AMN", "ARHS", "ARLO", "ASTH", "ATEN", "CARS", "DSP", "ETON", 
+   "AMN", "ARHS", "ARLO", "ASTH", "ATEN", "CARS", "DSP", "ETON", "EGHT",
     "GCT", "GDYN", "GNK", "GOLD", "GPRE", "HCSG", "HIVE", "HOPE", 
-    "HPE", "INVX", "IONQ", "IRWD", "KRP", "MG", "MGY", "MITK", 
-    "MLKN", "MNTN", "NOK", "NX", "NXDR", "OMER", "OPRT", "PANL", 
-    "PAYS", "PCRX", "PGNY", "PGY", "PRGS", "QBTS", "QNST", "QTWO", 
+    "HPE", "INVX", "IONQ", "IRWD", "KRP", "MG", "MGY", "MITK", "MDXG",
+    "MLKN", "MNTN", "NOK", "NX", "NXDR", "OMER", "OPRT", "OMDA", "PANL", 
+    "PAYS", "PCRX", "PGNY", "PGY", "PRGS", "PRTH", "QBTS", "QNST", "QTWO", 
     "QUBT", "REPX", "RIGL", "SWBI", "SWIM", "THRM", "VFF", "WWW", 
     "XPRO", "ZVRA"
 ]
 
 large_enrichment_tickers = [
 
-    "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", 
-    "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO", 
-    "AU", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG", "BWA", "CART", 
-    "CAT", "CDE", "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", 
-    "CORT", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX", 
-    "DASH", "DDOG", "DELL", "DGX", "DHR", "DOCN", "DT", "ECL", "EMR", "ENTG", 
-    "EOG", "ESTC", "ETSY", "EXEL", "EXLS", "EXPE", "FCX", "FIGS", "FIVE", "FIVN", 
-    "FLS", "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GOOG", "GOOGL", "GTES", 
-    "HALO", "HQY", "INGM", "INOD", "INSW", "INTC", "IOT", "IREN", "KEYS", "KLAC", 
-    "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META", "MNST", "MPC", 
-    "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS", "NEM", "NESR", "NOW", 
-    "NTAP", "NVDA", "NWS", "NWSA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", 
-    "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", 
-    "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", 
-    "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", 
-   "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", 
-    "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
+   "A", "AAOI", "AAPL", "ABBV", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB",
+    "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI",
+    "ATRC", "ATRO", "AU", "AVAH", "AVGO", "AVNT", "AVPT", "AXTA", "BDX", "BE",
+    "BIIB", "BMRN", "BMY", "BTSG", "BULL", "BWA", "CAH", "CART", "CAT", "CDE",
+    "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "CNK", "COHR", "COP", "CORT",
+    "CRBG", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX",
+    "CXW", "DAR", "DASH", "DDOG", "DE", "DELL", "DGX", "DHR", "DIS", "DK",
+    "DOCN", "DT", "DVN", "DXCM", "ECL", "EL", "ELF", "ELV", "EMR", "ENTG",
+    "EOG", "ESI", "ESTC", "ET", "ETSY", "EW", "EXEL", "EXLS", "EXPE", "FCX",
+    "FIGS", "FIVE", "FIVN", "FLEX", "FLS", "FLYW", "FORM", "FRSH", "FTI", "GDDY",
+    "GEV", "GLW", "GNRC", "GOOG", "GOOGL", "GPN", "GTES", "GTX", "HALO", "HPE",
+    "HQY", "HSIC", "HTGC", "HUM", "IFF", "INCY", "INGM", "INOD", "INSW", "INTC",
+    "IOT", "IQV", "IREN", "ITT", "JBL", "KDP", "KEYS", "KLAC", "KO", "LECO",
+    "LITE", "LLY", "LNG", "LRCX", "MANH", "MCHP", "MDB", "META", "MGNI", "MMM",
+    "MNST", "MPC", "MPLX", "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS",
+    "NEM", "NESR", "NOW", "NTAP", "NTNX", "NVDA", "NWS", "NWSA", "OKE", "OKTA",
+    "ONTO", "ORCL", "OVV", "OXY", "P", "PAA", "PAGP", "PANW", "PARR", "PAY",
+    "PCTY", "PDFS", "PG", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN",
+    "RELY", "RGEN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM",
+    "SKHY", "SLB", "SM", "SMTC", "SN", "SNDK", "SNX", "SOFI", "SPCX", "SSRM",
+    "ST", "STT", "TER", "TKR", "TMO", "TOST", "TRGP", "TSLA", "TSM", "TTC",
+    "TTEK", "TWLO", "TXN", "UBER", "UNH", "USFD", "VCYT", "VEEV", "VG", "VLO",
+    "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "WT", "WTTR", "XOM",
+    "XYZ", "ZBRA", "ZM"
 
 ]
 

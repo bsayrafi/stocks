@@ -49,7 +49,7 @@ constants.CONFIG["ENABLE_VALUATION"]= 1
 constants.CONFIG["DIP_LOOKBACK_DAYS"]= 5
 constants.CONFIG["DIP_QUALITY_MIN_SCORE"]= 50
 
-MAX_WORKERS = 6   # parallel ticker workers (was 6; watch the summary for Yahoo rate-limit outliers)
+MAX_WORKERS = 4   # parallel ticker workers (was 6; watch the summary for Yahoo rate-limit outliers)
 
 # Same-day disk caches (see cached_ticker.py). The first run each day fetches fresh
 # data; later runs that day reuse it. Skipped for tickers within 2 days of earnings.
@@ -220,9 +220,10 @@ debugTickers = [
   # 1 Medium
   # 0 small
 setEnable(1)
+force_redownload=False
 #runCoreScreener(num=3, force_redownload=False)
-runCoreScreener(num=0, force_redownload=True)
-runCoreScreener(num=2, force_redownload=True)
+runCoreScreener(0, force_redownload)
+runCoreScreener(2, force_redownload)
 setEnable(0)
 
 
