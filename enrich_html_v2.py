@@ -2259,6 +2259,19 @@ def check_key(label: str) -> str:
     return _snake(t)[:40].strip("_")
 
 
+def prev_session(daily: pd.DataFrame, in_progress: bool):
+    """O/H/L/C of the last COMPLETED regular session: yesterday while today's bar is still forming
+    (market open), otherwise the latest daily bar (pre-market / after-hours / overnight)."""
+    d = daily.dropna(subset=["Close"])
+    pos = -2 if in_progress else -1
+    if len(d) < abs(pos):
+        return None
+    r = d.iloc[pos]
+    return {"date": d.index[pos].date().isoformat(), "open": round(float(r["Open"]), 2),
+            "high": round(float(r["High"]), 2), "low": round(float(r["Low"]), 2),
+            "close": round(float(r["Close"]), 2)}
+
+
 def signal_badge_text(signal: dict) -> str:
     if signal["signal"] == "BUY":
         return f"BUY_SIGNAL - {signal['setup_label']} ({signal['grade']})"
@@ -2625,6 +2638,7 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         "news": news,
         # raw (unformatted) yfinance values behind the Fundamentals table, for the CSV
         "fund_raw": {key: info.get(key) for _, key, _ in FUNDAMENTAL_FIELDS} if info else {},
+        "prev_day": prev_session(tf_data["1D"], hhhl["today_in_progress"]),
     }
 
 
@@ -3641,6 +3655,10 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .card {{ scroll-margin-top: 12px; }}
   a.tk {{ color: var(--accent); font-weight: 700; text-decoration: none; }}
   a.tk:hover {{ text-decoration: underline; }}
+  #tk-tip {{ position: fixed; z-index: 9999; display: none; pointer-events: none; background: #0d1017; border: 1px solid #3a4560; border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.65; color: #dfe6f0; box-shadow: 0 8px 24px rgba(0,0,0,0.55); max-width: 380px; }}
+  #tk-tip b {{ color: #ffffff; font-size: 13px; }}
+  #tk-tip .k {{ color: #8b97ab; }}
+  #tk-tip .sep {{ border-top: 1px solid #2c3550; margin: 6px 0; }}
   .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }}
   .summary-table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
   .summary-table th {{ background: #232a3a; color: var(--accent); padding: 10px 12px; white-space: nowrap; border-bottom: 2px solid #33405a; }}
@@ -3881,6 +3899,10 @@ def report_to_row(report: dict, report_group: str) -> dict:
             row["overnight_trades"] = d.get("trades")
     row["current_ext_price"] = cur.get("price")
     row["current_ext_session"] = _SESSION_NAMES.get(cur.get("session")) if cur else None
+    row["current_ext_pct"] = cur.get("pct") if cur else None
+    pdy = report.get("prev_day") or {}
+    row.update({"prev_day_date": pdy.get("date"), "prev_day_open": pdy.get("open"), "prev_day_high": pdy.get("high"),
+                "prev_day_low": pdy.get("low"), "prev_day_close": pdy.get("close")})
 
     # --- setup signal breakdown
     ctx = sig["context"]
@@ -4064,6 +4086,50 @@ def _skipped_card(skipped: list) -> str:
 
 
 
+_TIP_SESSIONS = {"after-hours": "After-hours", "overnight": "Overnight", "pre-market": "Pre-market"}
+
+
+def _ticker_tip(r: dict) -> str:
+    """HTML for the hover card on a ticker: company / sector / industry, then the live price
+    (labelled with the session it comes from) and the previous session's O/H/L/C."""
+    def g(k):
+        v = r.get(k)
+        return None if v is None or (isinstance(v, float) and v != v) else v
+
+    def line(label, value):
+        return f'<div><span class="k">{label}</span> {html.escape(str(value))}</div>'
+
+    out = [f"<div><b>{html.escape(str(g('name') or r.get('ticker')))}</b></div>",
+           line("Sector:", g("sector") or "N/A"),
+           line("Industry:", g("industry") or "N/A"),
+           '<div class="sep"></div>']
+    price = g("current_price")
+    if g("market_open") is False and g("current_ext_price") is not None:
+        label = _TIP_SESSIONS.get(g("current_ext_session"), "Extended hours")
+        pct = g("current_ext_pct")
+        out.append(line(f"{label}:", f"{float(g('current_ext_price')):,.2f}" + (f"  ({pct:+.2f}% vs close)" if pct is not None else "")))
+    elif price is not None:
+        out.append(line("Market open:" if g("market_open") else "Last price:", f"{float(price):,.2f}"))
+    if g("prev_day_open") is not None:
+        out.append(line(f"Prev day ({g('prev_day_date')}):",
+                        f"O {g('prev_day_open'):,.2f}  ·  H {g('prev_day_high'):,.2f}  ·  "
+                        f"L {g('prev_day_low'):,.2f}  ·  C {g('prev_day_close'):,.2f}"))
+    return "".join(out)
+
+
+_TIP_SCRIPT = (
+    "<script>(function(){var tip=document.getElementById('tk-tip');"
+    "if(!tip){tip=document.createElement('div');tip.id='tk-tip';document.body.appendChild(tip);}"
+    "function place(e){var x=e.clientX+16,y=e.clientY+16,w=tip.offsetWidth,h=tip.offsetHeight;"
+    "if(x+w>window.innerWidth-8)x=e.clientX-w-16;if(y+h>window.innerHeight-8)y=e.clientY-h-16;"
+    "tip.style.left=Math.max(4,x)+'px';tip.style.top=Math.max(4,y)+'px';}"
+    "document.addEventListener('mouseover',function(e){var a=e.target.closest&&e.target.closest('[data-tip]');"
+    "if(!a)return;tip.innerHTML=a.getAttribute('data-tip');tip.style.display='block';place(e);});"
+    "document.addEventListener('mousemove',function(e){if(tip.style.display==='block')place(e);});"
+    "document.addEventListener('mouseout',function(e){var a=e.target.closest&&e.target.closest('[data-tip]');"
+    "if(a)tip.style.display='none';});})();</script>")
+
+
 def _card_id(ticker) -> str:
     return "card-" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(ticker))
 
@@ -4098,7 +4164,9 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
         href = f"#{_card_id(r['ticker'])}" if r.get("report") == "up" else (
             f"{down_file}#{_card_id(r['ticker'])}" if down_file else None)
         tk = html.escape(str(r["ticker"]))
-        tk_html = f'<a class="tk" href="{html.escape(href)}">{tk}</a>' if href else f"<strong>{tk}</strong>"
+        tip = html.escape(_ticker_tip(r), quote=True)
+        tk_html = (f'<a class="tk" href="{html.escape(href)}" data-tip="{tip}">{tk}</a>' if href
+                   else f'<strong data-tip="{tip}">{tk}</strong>')
         body += (f'<tr class="{"buy-row" if r["signal"] == "BUY" else "watch-row"}">'
                  f"<td>{tk_html}</td>"
                  f"<td><span class=\"badge {cls}\">{r['signal']}</span></td>"
@@ -4119,7 +4187,8 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
             'Sorted by Gap = distance from a BUY (0 = BUY). A missing turn or confirmation counts 1 each, '
             'a price/R:R problem 2-5 depending on how far the entry zone is, an extended stock 2, a failed structural '
             'requirement 3. Conditions are listed in order and must all hold. Turn levels (prior close, session VWAP) '
-            'move during the day.</p></section>')
+            'move during the day. Hover a ticker for company, sector, industry, price and the previous day.</p>'
+            + _TIP_SCRIPT + '</section>')
 
 
 def main(tickers, fileapp):
