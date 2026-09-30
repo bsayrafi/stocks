@@ -189,3 +189,4 @@ runtype = "all"
 
 run_enrichment(0, runtype)
 run_enrichment(2, runtype)
+run_enrichment(3, runtype)
