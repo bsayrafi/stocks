@@ -1,0 +1,104 @@
+Ticker-days evaluated: 132,395   tickers: 225   period: 2024-05-08 .. 2026-09-29
+Signals: WAIT 102,468, WATCH 28,783, BUY 1,144
+
+SIGNAL QUALITY - forward return from the signal day's close (no trade rules; % move, up_% = share positive)
+naive_t_vs_ALL treats overlapping windows as independent, so it flatters significance: read it loosely.
+   group  n_days  fwd5_mean_%  fwd5_up_%  fwd10_mean_%  fwd10_up_%  fwd20_mean_%  fwd20_up_%  naive_t_vs_ALL
+ALL days  132395         0.72       53.8          1.43        54.7          2.90        56.6             NaN
+     BUY    1144         0.58       53.5          1.11        55.6          2.71        57.1           -0.96
+   WATCH   28783         0.76       53.4          1.37        54.1          2.78        56.4           -0.81
+    WAIT  102468         0.72       53.9          1.44        54.9          2.94        56.7            0.45
+
+BUY days by setup (forward %, same horizons)
+                  n  fwd5  fwd10  fwd20
+setup                                  
+FRESH_BREAKOUT  580  0.51   0.91   2.44
+MA_BOUNCE        45 -0.03  -0.66   2.53
+MA_RECLAIM       77  0.09   0.19   0.49
+PULLBACK        381  0.95   1.84   3.81
+SUPPORT_BOUNCE   61 -0.04   0.97   1.51
+
+EXIT MODEL COMPARISON  (identical entries, different exits; slippage 0.05% per side; R = initial risk)
+  entries are chosen with the baseline exit (one open position per ticker); a trailing exit that holds longer may overlap the next entry,
+  so total_R / maxDD_R for the trailing models assume you can hold overlapping positions.
+  trailing arms after +2R; atr_trail = highest high - 2.5 x daily ATR; max hold 20d (trailing exits: 90d)
+       entry      exit  trades  win_%  avg_R  median_R  avg_win_R  avg_loss_R   PF  total_R  maxDD_R  hold_d
+signal_close     fixed     974   37.4  0.103    -1.009       2.09       -1.08 1.15     99.8     44.2     5.9
+signal_close breakeven     974   36.1  0.106    -1.008       2.12       -1.03 1.16    103.0     39.9     5.8
+signal_close atr_trail     974   32.9  0.203    -1.010       2.83       -1.08 1.28    197.6     60.6    10.1
+signal_close ema_trail     974   33.5  0.280    -1.010       2.97       -1.08 1.39    272.3     66.8    10.9
+
+CONTROL - is the SIGNAL better than a random day? Each BUY trade is replayed on 10 random non-BUY days of the
+  same ticker within +/-20 trading days (same stop distance in ATRs, same target multiple, same exit model).
+  BUY-control_R is the average paired difference; |t| below ~2 means the signal's timing adds nothing measurable.
+       entry      exit  trades  BUY_avg_R  control_avg_R  BUY-control_R  std_err     t  BUY_beats_ctrl_%
+signal_close     fixed     974      0.103          0.304         -0.201    0.054 -3.75              37.0
+signal_close breakeven     974      0.106          0.285         -0.179    0.052 -3.42              37.5
+signal_close atr_trail     974      0.203          0.448         -0.245    0.070 -3.52              32.5
+signal_close ema_trail     974      0.280          0.442         -0.163    0.071 -2.30              32.4
+
+  how much do losing trades give back? (fixed exit, 'mfe' = best unrealised gain before the exit bar)
+  share of losers that first reached: +0.5R 45%, +1R 22%, +1.5R 10%, +2R 3%   (losers: 610)
+
+DETAIL - entry: signal_close, exit: ema_trail  (max hold 90d, slippage 0.05% per side)
+trades                   974.00
+win_rate_%                33.50
+avg_R                      0.28
+median_R                  -1.01
+avg_win_R                  2.97
+avg_loss_R                -1.08
+profit_factor              1.39
+total_R                  272.30
+max_drawdown_R            66.80
+avg_hold_days             10.90
+avg_return_%               1.32
+losers_that_hit_+1R_%     27.00
+  exits: stop 520, trail 280, stop (gap) 91, trail (gap) 61, time 22
+
+  by setup:
+                trades  win_rate_%  avg_R  total_R
+setup                                             
+FRESH_BREAKOUT     508        31.5  0.255    129.8
+MA_BOUNCE           33        33.3  0.326     10.7
+MA_RECLAIM          69        30.4  0.027      1.8
+PULLBACK           315        36.8  0.354    111.4
+SUPPORT_BOUNCE      49        36.7  0.379     18.6
+
+  by grade:
+       trades  win_rate_%  avg_R  total_R
+grade                                    
+A         304        36.2  0.324     98.6
+B         670        32.2  0.259    173.7
+
+  by exit month:
+         trades  total_R  avg_R
+month                          
+2024-05       9    -8.72  -0.97
+2024-06      19    -3.35  -0.18
+2024-07      40    -2.20  -0.06
+2024-08      22     5.59   0.25
+2024-09      32    -3.38  -0.11
+2024-10      45    -4.00  -0.09
+2024-11      23    17.98   0.78
+2024-12      53    57.27   1.08
+2025-01      35   -30.17  -0.86
+2025-02      33     1.12   0.03
+2025-03      10    -4.29  -0.43
+2025-04      12    -5.14  -0.43
+2025-05      15    -8.82  -0.59
+2025-06      23    -7.83  -0.34
+2025-07      41    15.94   0.39
+2025-08      42    29.25   0.70
+2025-09      43    27.06   0.63
+2025-10      45    29.50   0.66
+2025-11      29    14.12   0.49
+2025-12      30    21.34   0.71
+2026-01      41    -4.94  -0.12
+2026-02      32    -8.82  -0.28
+2026-03      50    45.05   0.90
+2026-04      38     9.01   0.24
+2026-05      31   -13.44  -0.43
+2026-06      41    22.01   0.54
+2026-07      40    22.06   0.55
+2026-08      30   -20.10  -0.67
+2026-09      70    80.23   1.15

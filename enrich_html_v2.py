@@ -7,11 +7,13 @@ ticker into a trade SETUP instead of running one generic gate:
   1. CONTEXT  (daily)  UPTREND / EARLY_UPTREND / UPTREND_WEAK / RANGE / DOWNTREND
                        from price vs EMA50, EMA50 slope, swing higher-lows/highs,
                        MA reclaim history and extension above EMA50 (in ATRs)
-  2. SETUP             FRESH_BREAKOUT, SUPPORT_BOUNCE, MA_BOUNCE, PULLBACK, MA_RECLAIM
+  2. SETUP             traded: PULLBACK only  (MA_BOUNCE, SUPPORT_BOUNCE, MA_RECLAIM, FRESH_BREAKOUT are detected, not traded)
   3. CONFIRMATION      setup-specific: volume, stochastic, candle, structure, 1h timing
-  4. RISK              setup-specific stop, nearest real resistance as target, R:R >= 1.5
+  4. RISK              setup-specific stop; nearest real resistance only FILTERS entries (R:R >= 1.5)
   5. VERDICT           BUY (required checks + enough confirmations + R:R)
                        WATCH (setup present but blocked)  /  WAIT (no setup)
+  6. EXIT              initial stop, no profit target; after +2R trail the stop under the daily EMA20 (raise only);
+                       leave after 90 trading days. (Backtested over 2 years; see backtest_v2.py for the evidence.)
 """
 
 import yfinance as yf
@@ -1443,6 +1445,16 @@ def fetch_analyst_data(ticker: str, tkr: "yf.Ticker | None" = None, info: dict |
 #
 # All setup logic runs on DAILY bars (built from the hourly download); 4h and 1h
 # only supply candle patterns and entry timing.
+#
+# STRATEGY (updated after the 2-year backtest, see backtest_v2.py):
+#   * Traded setup: pullback in an uptrend ONLY. It carried the backtest (323 of 414 trades, +0.24R vs matched random days,
+#     t 2.1). MA bounce and support bounce (too few trades / no measurable edge), MA reclaim (mixed) and fresh breakouts
+#     (-0.5R vs random days) are still detected and shown for information but are NOT traded.
+#   * Entry: the usual BUY definition (structure + turn + confirmations + R:R >= 1.5 to the nearest real resistance).
+#   * Exit: the setup's structural stop; NO fixed profit target. Once price trades +2R above the entry,
+#     trail the stop under the daily EMA20 (raise only); leave after 90 trading days at the latest.
+#     In the backtest this trailing exit beat the fixed stop/target exit; the fixed target was the weaker exit.
+#   * The old A/B grade is no longer shown: grade A was not better than grade B once breakouts were removed.
 
 SETUP_LABELS = {
     "FRESH_BREAKOUT": "Fresh breakout",
@@ -1452,7 +1464,30 @@ SETUP_LABELS = {
     "MA_RECLAIM": "MA reclaim (early trend)",
 }
 
+# What the 2-year backtest said about each traded setup: BUY minus matched random nearby days (EMA20-trail exit,
+# BUY days, signal_close entry). Shown on the card so the level of evidence is never hidden.
+SETUP_EVIDENCE = {
+    "PULLBACK": "Backtest (2y, 323 trades): +0.37R per trade, +0.24R vs matched random days (t 2.1) - the only setup with a measurable edge.",
+    "MA_BOUNCE": "Not traded. Backtest: 36 trades, +0.29R per trade, +0.35R vs matched random days (t 0.9) - too few trades to conclude.",
+    "SUPPORT_BOUNCE": "Not traded. Backtest: 55 trades, +0.28R per trade but only +0.09R vs matched random days (t 0.3) - no measurable edge.",
+    "MA_RECLAIM": "Not traded. Backtest: 70 trades, -0.33R vs control (t -1.6) on BUY days but +0.04R on pre-turn days - no measurable edge.",
+    "FRESH_BREAKOUT": "Not traded. Backtest: 677 trades, -0.52R vs control (t -5.4) - breakouts as defined here lose to random days.",
+}
+
+NOT_TRADED_WHY = {
+    "FRESH_BREAKOUT": "the backtest showed it trailing random days by about 0.5R",
+    "MA_RECLAIM": "the backtest found no measurable edge",
+    "MA_BOUNCE": "too few backtest trades to show an edge",
+    "SUPPORT_BOUNCE": "the backtest found no measurable edge",
+}
+
 SETUP_DEFAULTS = {
+    # ---- strategy
+    "TRADEABLE_SETUPS": ("PULLBACK",),   # the only setup with a measurable edge; add "MA_BOUNCE" / "SUPPORT_BOUNCE" / "MA_RECLAIM" / "FRESH_BREAKOUT" to trade them
+    "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
+    "TRAIL_ARM_R": 2.0,            # the trailing stop arms once price has gained this many R
+    "TRAIL_MA": "EMA20",           # ... and then trails under this daily moving average (raise only)
+    "EXIT_MAX_HOLD_DAYS": 90,      # time stop for the trailing exit
     # ---- risk / reward
     "SETUP_MIN_RR": 1.5,           # BUY needs reward:risk >= this
     "TARGET_MIN_R": 1.5,           # (report flag) targets below this R are flagged
@@ -1460,6 +1495,11 @@ SETUP_DEFAULTS = {
     "MIN_TARGET_ATR": 1.0,         # a real resistance closer than this many ATRs is "blocking" (boxed in); minor pivots inside it are listed only
     "TARGET_FALLBACK_R": 2.0,      # no resistance far enough above -> target = this many R
     "TARGET_DAYS": 120,            # daily bars searched for resistance targets (longer than SR_DAYS)
+    "DIP_TAIL_DAYS": None,         # volume-fade tail: None = 2 days on short dips (<= 4 days) else 3; 2 or 3 forces that length
+    "RESET_INDICATOR": "stoch",    # "stoch" (daily %K, live) or "rsi" (daily RSI14) for the 'reset' confirmation
+    "RESET_BARS": 5,               # ... must have been at/below RESET_LEVEL at least once in this many recent daily bars
+    "RESET_LEVEL": 40,
+    "VALUE_ZONE_ATR": 0.5,         # pullback confirmation: the dip low sat within this many ATRs of EMA20/EMA50/SMA50/a swing level
     "DIP_TAIL_MAX_RVOL": 1.0,      # volume must be fading AND the last dip days at/below this multiple of normal volume
     "OVERHEAD_MIN_TOUCHES": 2,     # a swing level inside MIN_TARGET_ATR blocks the target when it has >= this many touches
     "WATCH_CONFIRM_GAP": 1,        # WATCH = required checks pass and confirmations are within this many of the minimum
@@ -1676,6 +1716,14 @@ def _rejection(env: dict, test_pos: int) -> bool:
     return bool(rng > 0 and (env["c"] - float(row["Low"])) / rng >= 0.5)
 
 
+def _rsi(close: pd.Series, n: int = 14) -> pd.Series:
+    """Wilder RSI."""
+    delta = close.diff()
+    up, dn = delta.clip(lower=0), (-delta).clip(lower=0)
+    rs = up.ewm(alpha=1 / n, adjust=False).mean() / dn.ewm(alpha=1 / n, adjust=False).mean()
+    return 100 - 100 / (1 + rs)
+
+
 def _dip_volume_contracting(env: dict, hi_pos: int):
     """Is selling volume FADING toward the end of the dip? Daily volume of each dip day is
     expressed as a multiple of the prior 20-day average (so quiet and busy stocks compare fairly).
@@ -1696,7 +1744,9 @@ def _dip_volume_contracting(env: dict, hi_pos: int):
         dip = dip[~np.isnan(dip)]
     if len(dip) < 3:
         return False, f"only {len(dip)} dip day(s) so far - too short to judge"
-    t = 2 if len(dip) <= 4 else 3
+    t = env["dip_tail_days"] or (2 if len(dip) <= 4 else 3)
+    if len(dip) < t + 1:
+        return False, f"only {len(dip)} dip day(s) so far - too short for a {t}-day tail"
     head, tail = dip[:-t], dip[-t:]
     hm, tm = float(head.mean()), float(tail.mean())
     today = f", incl. today at {float(live):.2f}x pace" if live is not None else ""
@@ -1706,7 +1756,11 @@ def _dip_volume_contracting(env: dict, hi_pos: int):
 
 def _stoch_reset_turn(env: dict) -> bool:
     """Daily stochastic dipped into the lower zone in the last 5 bars and is turning up."""
-    return bool(env["k_min5"] <= 40 and env["k_rising"])
+    return bool(env["reset_min"] <= env["reset_level"] and env["k_rising"])
+
+
+def _reset_label(env: dict) -> str:
+    return f"Daily {env['reset_name']} reset (<= {env['reset_level']:g} in last {env['reset_bars']} bars)"
 
 
 def detect_breakout(env: dict, cfg: dict):
@@ -1803,7 +1857,7 @@ def detect_support_bounce(env: dict, cfg: dict):
         "confirms": [
             ("Bullish candle" + (f" ({', '.join(candle_names)})" if candle_ok else ""), candle_ok),
             ("Volume on the bounce >= average", v is not None and v >= 1.0),
-            ("Daily stochastic reset (<= 40) and turning up", _stoch_reset_turn(env)),
+            (_reset_label(env) + " and turning up", _stoch_reset_turn(env)),
             ("Trend context intact (UPTREND / EARLY_UPTREND, higher lows)",
              ctx["state"] in ("UPTREND", "EARLY_UPTREND") and ctx["higher_lows"]),
         ],
@@ -1850,7 +1904,7 @@ def detect_ma_bounce(env: dict, cfg: dict):
             "confirms": [
                 ("Bullish candle" + (f" ({', '.join(candle_names)})" if candle_ok else ""), candle_ok),
                 ("Volume fading into the end of the dip (" + dry_detail + ")", dry),
-                ("Daily stochastic reset (<= 40) and turning up", _stoch_reset_turn(env)),
+                (_reset_label(env) + " and turning up", _stoch_reset_turn(env)),
                 ("Higher lows in place", ctx["higher_lows"]),
             ],
             "notes": [],
@@ -1900,7 +1954,7 @@ def detect_pullback(env: dict, cfg: dict):
     if ctx["sma50"] is not None:
         zone.append(("SMA50", ctx["sma50"]))
     zone += [(f"swing level {lv['price']:.2f}", lv["price"]) for lv in env["levels"]]
-    near = [nm for nm, v in zone if abs(pb_low - v) <= 0.5 * a]
+    near = [nm for nm, v in zone if abs(pb_low - v) <= env["value_zone_atr"] * a]
     dry, dry_detail = _dip_volume_contracting(env, hi_pos)
     launch = _launch_low(d, hi_pos, cfg["PULLBACK_STRUCT_BARS"], cfg["PULLBACK_MIN_DROP_ATR"] * a)
     if launch is not None:
@@ -1920,7 +1974,7 @@ def detect_pullback(env: dict, cfg: dict):
         ],
         "confirms": [
             ("Volume fading into the end of the dip (" + dry_detail + ")", dry),
-            ("Daily stochastic reset (<= 40 in last 5 bars)", env["k_min5"] <= 40),
+            (_reset_label(env), env["reset_min"] <= env["reset_level"]),
             ("Pullback low sat at value" + (f" ({', '.join(near)})" if near else " (EMA20/EMA50/SMA50/swing level)"),
              bool(near)),
             ("Bullish candle" + (f" ({', '.join(candle_names)})" if candle_ok else ""), candle_ok),
@@ -2015,33 +2069,49 @@ def trade_plan(setup: dict, price: float, atr: float, target_levels: list, cfg: 
 
 def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_d: pd.DataFrame,
                     hourly: pd.DataFrame, h1_macd_ok: bool, above_vwap, in_progress: bool, cfg: dict,
-                    high_52w=None, vwap=None) -> dict:
-    d, a = daily.dropna(subset=["Close"]), float(daily_atr)
+                    high_52w=None, vwap=None, shared: dict = None) -> dict:
+    """`shared` (optional dict) lets several calls for the SAME day with different item settings (the backtest's
+    variants) reuse the parts that do not depend on those settings."""
+    sh = shared if shared is not None else {}
+    if "d" not in sh:
+        d0 = daily.dropna(subset=["Close"])
+        a0 = float(daily_atr)
+        sh["d"], sh["a"] = d0, a0
+        sh["ctx"] = daily_context(d0, a0, cfg)
+        sh["ratio"] = (d0["Volume"] / d0["Volume"].rolling(20).mean().shift(1))
+        sh["levels"] = swing_levels_all(d0.iloc[-cfg.get("SR_DAYS", 60):], a0, cfg.get("SR_PIVOT", 2),
+                                        cfg.get("SR_MERGE_ATR", 0.5))
+        sh["target_levels"] = swing_levels_all(d0.iloc[-cfg["TARGET_DAYS"]:], a0, cfg.get("SR_PIVOT", 2),
+                                               cfg.get("SR_MERGE_ATR", 0.5))
+        sh["k"] = stoch_d["%K"].dropna()
+        sh["rsi"] = _rsi(d0["Close"], 14)
+    d, a, ctx, ratio = sh["d"], sh["a"], sh["ctx"], sh["ratio"]
     c = float(d["Close"].iloc[-1])
-    ctx = daily_context(d, a, cfg)
 
     # volume: ratio of each daily bar to the PRIOR 20-bar average; today's bar (still
     # forming) is compared on a same-time-of-day basis instead of its partial total
-    ratio = (d["Volume"] / d["Volume"].rolling(20).mean().shift(1))
     done = ratio.iloc[:-1] if in_progress else ratio
     rvol_live = intraday_rvol(hourly, cfg.get("MARKET_TZ", "America/New_York")) if in_progress \
         else (None if np.isnan(ratio.iloc[-1]) else float(ratio.iloc[-1]))
     vol = {"rvol_live": None if rvol_live is None else round(rvol_live, 2),
            "done_ratios": [round(float(x), 2) for x in done.dropna().tail(5)]}
 
-    k = stoch_d["%K"].dropna()
+    k = sh["k"]
     env = {
         "d": d, "atr": a, "c": c, "ctx": ctx, "res": results, "vol": vol,
         "vol_ratio": ratio.to_numpy(dtype=float), "in_progress": bool(in_progress),
-        "dip_tail_max": cfg["DIP_TAIL_MAX_RVOL"],
-        "levels": swing_levels_all(d.iloc[-cfg.get("SR_DAYS", 60):], a, cfg.get("SR_PIVOT", 2),
-                                   cfg.get("SR_MERGE_ATR", 0.5)),
+        "dip_tail_max": cfg["DIP_TAIL_MAX_RVOL"], "dip_tail_days": cfg["DIP_TAIL_DAYS"],
+        "value_zone_atr": cfg["VALUE_ZONE_ATR"],
+        "levels": sh["levels"],
         "k": float(k.iloc[-1]), "k_rising": bool(k.iloc[-1] > k.iloc[-2]),
-        "k_min5": float(k.iloc[-5:].min()), "k_above_d": bool(results["1D"]["k_above_d"]),
+        "k_min5": float(k.iloc[-5:].min()),
+        "reset_min": float((sh["rsi"] if cfg["RESET_INDICATOR"] == "rsi" else k).iloc[-cfg["RESET_BARS"]:].min()),
+        "reset_level": cfg["RESET_LEVEL"], "reset_bars": cfg["RESET_BARS"],
+        "reset_name": "RSI" if cfg["RESET_INDICATOR"] == "rsi" else "stochastic",
+        "k_above_d": bool(results["1D"]["k_above_d"]),
         "timing_ok": bool(h1_macd_ok and above_vwap is not False),
     }
-    target_levels = swing_levels_all(d.iloc[-cfg["TARGET_DAYS"]:], a, cfg.get("SR_PIVOT", 2),
-                                     cfg.get("SR_MERGE_ATR", 0.5))
+    target_levels = sh["target_levels"]
 
     # major highs = real resistance even without swing touches (today's own bar is excluded)
     def major_highs(skip_bars: int) -> list:
@@ -2083,10 +2153,13 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
          f"MACD {'bullish' if h1_macd_ok else 'not bullish'}, %K {'>' if h1r['k_above_d'] else '<'} %D)", h1_turn),
     ]
 
-    setups = []
+    setups, not_traded = [], []
     for fn in (detect_breakout, detect_support_bounce, detect_ma_bounce, detect_pullback, detect_reclaim):
         s = fn(env, cfg)
         if s is None:
+            continue
+        if s["type"] not in cfg["TRADEABLE_SETUPS"]:
+            not_traded.append(s["type"])                        # shown for information only
             continue
         s.update(trade_plan(s, c, a, target_levels, cfg,
                             major_highs(cfg["BREAKOUT_FRESH_BARS"] if s["type"] == "FRESH_BREAKOUT" else 1)))
@@ -2104,12 +2177,20 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
         if s["type"] != "FRESH_BREAKOUT" and ctx["ext_ema50_atr"] > cfg["MAX_EXT_ATR"]:
             fails.append(f"extended {ctx['ext_ema50_atr']:.1f} ATR above EMA50")
         s["fails"], s["buy"] = fails, not fails
+        # would this be a BUY if the confirmation COUNT did not matter? (used by the backtest's confirmation sweep)
+        s["cand"] = not [f for f in fails if not f.startswith("confirmations ")]
         s["near"] = bool(all(ok for _, ok in s["required"])
                          and s["n_confirms"] >= s["min_confirms"] - cfg["WATCH_CONFIRM_GAP"])
         setups.append(s)
 
     setups.sort(key=lambda s: (s["buy"], s["near"], s["n_confirms"], s["rr"]), reverse=True)
     best = setups[0] if setups else None
+    cands = [x for x in setups if x["cand"]]
+    conf_candidate = None
+    if cands:
+        cb = max(cands, key=lambda x: (x["n_confirms"], x["rr"]))
+        conf_candidate = {"type": cb["type"], "n_confirms": cb["n_confirms"], "of": len(cb["confirms"]),
+                          "stop": cb["stop"], "target": cb["target"], "rr": cb["rr"], "buy_up_to": cb["buy_up_to"]}
 
     # levels worth an alert when there is no trade yet
     watch = [(nm if v < c else f"{nm} (reclaim)", v)
@@ -2135,21 +2216,21 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
             "" if verdict == "WATCH" else f"weak {SETUP_LABELS[best['type']].lower()}: ") + "; ".join(best["fails"])
     elif ctx["state"] == "CORRECTION":
         wait_reason = (f"under EMA50 by {abs(ctx['ext_ema50_atr']):.1f} ATR with a higher low intact - "
-                       "wait for a support bounce or an EMA50 reclaim")
+                       "only pullbacks in a confirmed uptrend are traded, so wait for an EMA50 reclaim and a rebuilt uptrend")
     elif ctx["state"] == "DOWNTREND":
         wait_reason = "downtrend (below a falling EMA50) - no long setup"
     elif ctx["state"] == "RANGE":
-        wait_reason = "no trend (below a flat EMA50) - wait for a reclaim or a breakout"
+        wait_reason = "no trend (below a flat EMA50) - only pullbacks in a confirmed uptrend are traded"
     elif ctx["state"] == "UPTREND_WEAK":
         gaps = [nm for nm, ok in (("higher highs", ctx["higher_highs"]), ("higher lows", ctx["higher_lows"]),
                                   ("a rising EMA50", (ctx["ema50_slope_pct"] or 0) > 0)) if not ok]
         wait_reason = ("above the EMA50 but not a clean uptrend yet (missing: " + ", ".join(gaps) +
-                       ") - pullback and MA-bounce setups need higher highs, higher lows and a rising EMA50")
+                       ") - the pullback setup needs higher highs, higher lows and a rising EMA50")
     elif ctx["ext_ema50_atr"] > 2.0:
-        wait_reason = (f"extended {ctx['ext_ema50_atr']:.1f} ATR above EMA50 with no fresh breakout - "
+        wait_reason = (f"extended {ctx['ext_ema50_atr']:.1f} ATR above EMA50 - "
                        "wait for a pullback to value")
     else:
-        wait_reason = "trend intact, but price is not at a level/MA and there is no fresh breakout"
+        wait_reason = "trend intact, but no pullback setup has formed (a dip of 20-65% of the last leg that holds above the last major swing low)"
 
     # concrete conditions that would turn a WATCH into a BUY (all must hold together)
     buy_when = []
@@ -2175,10 +2256,8 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
             opts = []
             if best.get("buy_below"):
                 opts.append(f"pull back to {best['buy_below']:.2f} or lower (R:R {min_rr:g}+ with the same stop and target)")
-            if best.get("breakout_above"):
-                opts.append(f"close above {best['breakout_above']:.2f} on {cfg['BREAKOUT_RVOL']:g}x+ volume (becomes a fresh breakout)")
             buy_when.append("Price: " + " OR ".join(opts) if opts
-                            else f"Price: R:R is {best['rr']:.2f}, it needs {min_rr:g}+")
+                            else f"Price: R:R is {best['rr']:.2f} (resistance at {best['target']:.2f} is too close), it needs {min_rr:g}+")
             if turn_items:
                 buy_when.append("Then the turn has to show at that price - " + "; ".join(turn_items))
         elif turn_items:
@@ -2211,6 +2290,11 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
             if best["type"] != "FRESH_BREAKOUT" and ctx["ext_ema50_atr"] > cfg["MAX_EXT_ATR"]:
                 distance += 2
 
+    if best is None and not_traded:
+        wait_reason += "; " + "; ".join(
+            f"{SETUP_LABELS[t]} present but not traded ({NOT_TRADED_WHY.get(t, 'not a traded setup')})"
+            for t in not_traded)
+
     grade = "-"
     if best is not None:
         grade = ("A" if best["n_confirms"] >= 4 and best["rr"] >= 2 else "B") if best["buy"] else (
@@ -2239,6 +2323,13 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
         "buy_up_to": best["buy_up_to"] if best else None,
         "breakout_above": best["breakout_above"] if best else None,
         "watch_kind": watch_kind,
+        "not_traded": [SETUP_LABELS[t] for t in not_traded],
+        "conf_candidate": conf_candidate,
+        "risk": best["risk"] if best else None,
+        "arm_level": round(c + cfg["TRAIL_ARM_R"] * best["risk"], 2) if best else None,
+        "trail_now": ctx["ema20"] if cfg["TRAIL_MA"] == "EMA20" else ctx["ema50"],
+        "pre_turn": bool(best is not None and not best["buy"] and len(best["fails"]) == 1
+                         and best["fails"][0].startswith("no turn yet")),      # a BUY in every respect except the turn gate
         "buy_when": buy_when,
         "distance": None if distance is None else round(distance, 1),
         "turn_above": round(turn_above, 2) if turn_above else None,
@@ -2276,7 +2367,7 @@ def prev_session(daily: pd.DataFrame, in_progress: bool):
 
 def signal_badge_text(signal: dict) -> str:
     if signal["signal"] == "BUY":
-        return f"BUY_SIGNAL - {signal['setup_label']} ({signal['grade']})"
+        return f"BUY_SIGNAL - {signal['setup_label']}"
     if signal["signal"] == "WATCH":
         kind = {"price": "wait for price", "trigger": "wait for trigger"}.get(signal.get("watch_kind"), "")
         return f"WATCH - {signal['setup_label']}" + (f" ({kind})" if kind else "")
@@ -2286,7 +2377,7 @@ def signal_badge_text(signal: dict) -> str:
 def print_signal_block(signal: dict) -> None:
     ctx = signal["context"]
     print(f"\nSignal: {signal['signal']}"
-          + (f"  -  {signal['setup_label']}, grade {signal['grade']}" if signal["setup"] else ""))
+          + (f"  -  {signal['setup_label']}" if signal["setup"] else ""))
     print(f"  Context: {ctx['state']}  (close {ctx['close']}, EMA50 {ctx['ema50']}, {ctx['ext_ema50_atr']:+.1f} ATR; "
           f"EMA50 slope {ctx['ema50_slope_pct']}%/5d; higher lows {ctx['higher_lows']}, "
           f"higher highs {ctx['higher_highs']}; {ctx['days_above_ema50']} close(s) above EMA50)")
@@ -2305,8 +2396,13 @@ def print_signal_block(signal: dict) -> None:
     print(f"  Confirmations ({signal['n_confirms']}/{len(signal['confirms'])}, need {signal['min_confirms']}):")
     for lbl, ok in signal["confirms"]:
         print(f"      [{'PASS' if ok else 'FAIL'}] {lbl}")
-    print(f"  Plan: stop {signal['stop']}, target {signal['target']} ({signal['target_src']}), R:R {signal['rr']}"
-          + (f", still worth buying up to {signal['buy_up_to']}" if signal.get("buy_up_to") else ""))
+    print(f"  Plan: initial stop {signal['stop']} (1R = {signal['risk']:.2f}/share); no profit target. Once price trades at "
+          f"{signal['arm_level']} (+2R) trail the stop under the daily EMA20 (now {signal['trail_now']}), raise only; "
+          f"exit by the trail, the stop, or after 90 trading days.")
+    print(f"        R:R filter: nearest real resistance {signal['target']} ({signal['target_src']}) gives R:R {signal['rr']}"
+          + (f"; still worth buying up to {signal['buy_up_to']}" if signal.get("buy_up_to") else ""))
+    if signal.get("setup") in SETUP_EVIDENCE:
+        print("  Evidence: " + SETUP_EVIDENCE[signal["setup"]])
     if signal["fails"]:
         print("  Blocked by: " + "; ".join(signal["fails"]))
     if signal.get("buy_when"):
@@ -2317,8 +2413,6 @@ def print_signal_block(signal: dict) -> None:
         print(f"  R:R reaches the minimum at or below {signal['buy_below']} (same stop/target) - a pullback entry zone")
     if signal.get("turn_above") and signal["signal"] != "BUY":
         print(f"  Turn watch: price back above {signal['turn_above']} (today's open / mid-range / session VWAP) would flip the turn checks")
-    if signal.get("breakout_above") and signal["signal"] != "BUY":
-        print(f"  Or a close above {signal['breakout_above']} on volume would turn this into a fresh breakout")
     others = [s for s in signal["all_setups"] if s["type"] != signal["setup"]]
     if others:
         print("  Also detected: " + ", ".join(f"{s['label']} ({'BUY' if s['buy'] else 'watch' if s['near'] else 'weak'})" for s in others))
@@ -2356,8 +2450,9 @@ def render_signal_section(report: dict) -> str:
         plan_ok = sig["rr"] is not None and sig["rr"] >= cfg["SETUP_MIN_RR"]
         others = [s for s in sig["all_setups"] if s["type"] != sig["setup"]]
         right = (
-            f"<h3>Setup: {html.escape(sig['setup_label'])} (grade {sig['grade']})</h3>"
+            f"<h3>Setup: {html.escape(sig['setup_label'])}</h3>"
             f"<p class=\"note\">{html.escape(sig['level_desc'])}</p>"
+            f"<p class=\"note\">{html.escape(SETUP_EVIDENCE.get(sig['setup'], ''))}</p>"
             "<h3>Required</h3><table class=\"detail-table\"><tbody>"
             + "".join(chk(l, ok) for l, ok in sig["required"]) + "</tbody></table>"
             "<h3>Turn (daily and 1h must both have turned)</h3><table class=\"detail-table\"><tbody>"
@@ -2367,10 +2462,13 @@ def render_signal_section(report: dict) -> str:
             + "".join(chk(l, ok) for l, ok in sig["confirms"]) + "</tbody></table>"
             "<h3>Trade plan</h3><table class=\"detail-table\"><tbody>"
             + kv("Entry (last price)", f"{report['current_price']:.2f}")
-            + kv("Stop", f"{sig['stop']:.2f}")
-            + kv("Target", f"{sig['target']:.2f} <span class=\"note\">({html.escape(sig['target_src'])})</span>")
-            + kv(f"Reward : risk (min {cfg['SETUP_MIN_RR']:g})", f"{sig['rr']:.2f} " + _badge(plan_ok))
-            + (kv(f"Buy up to (R:R stays &ge; {cfg['SETUP_MIN_RR']:g})",
+            + kv("Initial stop", f"{sig['stop']:.2f} <span class=\"note\">(1R = {sig['risk']:.2f} per share)</span>")
+            + kv(f"+{cfg['TRAIL_ARM_R']:g}R level (arms the trail)", f"{sig['arm_level']:.2f}")
+            + kv("Then trail the stop under", f"daily {cfg['TRAIL_MA']} <span class=\"note\">(now {sig['trail_now']:.2f}; raise only)</span>")
+            + kv("Exit", f"trailing / initial stop, or after {cfg['EXIT_MAX_HOLD_DAYS']} trading days <span class=\"note\">(no profit target)</span>")
+            + kv("Nearest real resistance (R:R filter)", f"{sig['target']:.2f} <span class=\"note\">({html.escape(sig['target_src'])})</span>")
+            + kv(f"Reward : risk to it (min {cfg['SETUP_MIN_RR']:g})", f"{sig['rr']:.2f} " + _badge(plan_ok))
+            + (kv(f"Buy up to (R:R stays >= {cfg['SETUP_MIN_RR']:g})",
                   f"{sig['buy_up_to']:.2f} <span class=\"note\">({(sig['buy_up_to'] / report['current_price'] - 1) * 100:+.1f}% from here)</span>")
                if sig.get("buy_up_to") else "")
             + (kv("Overhead resistance inside 1 ATR", html.escape(", ".join(str(x) for x in sig["overhead"])))
@@ -2384,21 +2482,18 @@ def render_signal_section(report: dict) -> str:
                       + "".join(f"<li>{html.escape(x)}</li>" for x in sig["buy_when"]) + "</ul>")
         if sig.get("buy_below"):
             pct = (sig["buy_below"] / report["current_price"] - 1) * 100
-            right += (f"<p class=\"note\"><strong>Entry zone:</strong> R:R reaches {cfg['SETUP_MIN_RR']:g} at or below "
-                      f"{sig['buy_below']:.2f} ({pct:.1f}% from here), keeping the same stop and target.</p>")
+            right += (f"<p class=\"note\"><strong>Entry zone:</strong> R:R to the resistance reaches {cfg['SETUP_MIN_RR']:g} at or below "
+                      f"{sig['buy_below']:.2f} ({pct:.1f}% from here), keeping the same stop.</p>")
         if sig.get("turn_above") and sig["signal"] != "BUY":
             right += (f"<p class=\"note\"><strong>Turn watch:</strong> price back above {sig['turn_above']:.2f} "
                       "(today's open / mid-range / session VWAP) would flip the turn checks; MACD or %K must confirm.</p>")
-        if sig.get("breakout_above") and sig["signal"] != "BUY":
-            right += (f"<p class=\"note\"><strong>Or:</strong> a close above {sig['breakout_above']:.2f} on "
-                      f"&ge; {cfg['BREAKOUT_RVOL']:g}x volume would turn this into a fresh breakout.</p>")
         if others:
             right += ("<p class=\"note\"><strong>Also detected:</strong> "
                       + html.escape(", ".join(f"{s['label']} ({'BUY' if s['buy'] else 'watch' if s['near'] else 'weak'}, R:R {s['rr']})" for s in others))
                       + "</p>")
     else:
         watch = ", ".join(f"{n} {v}" for n, v in sig["watch_levels"]) or "none"
-        right = ("<h3>Setup: none</h3>"
+        right = ("<h3>Setup: none (traded setups)</h3>"
                  f"<p class=\"note\">{html.escape(sig['wait_reason'])}</p>"
                  f"<p class=\"note\"><strong>Levels to watch (below price):</strong> {html.escape(watch)}</p>")
 
@@ -2574,7 +2669,8 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     news_days = cfg.get("NEWS_DAYS", 0)
     catalyst_days = cfg.get("CATALYST_NEWS_DAYS", 14)
     news_for = cfg.get("NEWS_FOR", "up")
-    will_be_shown = not all(report_filter_checks({"signal": signal, "analyst": analyst}).values())
+    will_be_shown = (not cfg.get("_filter_active", True)) or not all(
+        report_filter_checks({"signal": signal, "analyst": analyst}).values())
     if news_for == "none":
         news_skipped = "news turned off (NEWS_FOR)"
     elif not will_be_shown:
@@ -3920,6 +4016,8 @@ def report_to_row(report: dict, report_group: str) -> dict:
         "setup_level": sig["level"], "setup_stop": sig["stop"], "setup_target": sig["target"],
         "setup_rr": sig["rr"], "setup_buy_below": sig.get("buy_below"), "setup_buy_up_to": sig.get("buy_up_to"),
         "setup_watch_kind": sig.get("watch_kind"), "setup_breakout_above": sig.get("breakout_above"), "setup_turn_above": sig.get("turn_above"),
+        "setup_arm_level": sig.get("arm_level"), "setup_risk": sig.get("risk"), "setup_trail_ema20": sig.get("trail_now"),
+        "setup_not_traded": ", ".join(sig.get("not_traded") or []) or None,
         "setup_buy_when": " | ".join(sig.get("buy_when") or []) or None,
         "setup_distance": sig.get("distance"), "setup_target_src": sig.get("target_src") or None,
         "setup_overhead": ", ".join(str(x) for x in sig.get("overhead", [])) or None, "setup_confirms": sig["n_confirms"] if sig["setup"] else None,
@@ -4184,16 +4282,20 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
                  f'<td class="num">{f(r.get("current_price"))}</td><td class="num">{f(r.get("setup_rr"))}</td>'
                  f'<td class="num">{gap_html}</td>'
                  f'<td class="num">{f(r.get("setup_buy_up_to"))}</td>'
-                 f'<td class="num">{f(r.get("setup_buy_below"))}</td><td class="num">{f(r.get("setup_breakout_above"))}</td>'
+                 f'<td class="num">{f(r.get("setup_buy_below"))}</td><td class="num">{f(r.get("setup_arm_level"))}</td>'
                  f'<td class="num">{f(r.get("setup_stop"))}</td><td class="num">{f(r.get("setup_target"))}</td>'
                  f'<td class="buywhen">{waiting}</td></tr>')
     return (f'<section class="card"><h2>Setups at a glance ({len(picks)})</h2>'
             '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Ticker</th><th>Signal</th><th>Setup</th><th>Price</th><th>R:R</th><th>Gap</th><th>Buy up to</th>'
-            '<th>Buy at/below</th><th>Breakout above</th><th>Stop</th><th>Target</th>'
+            '<th>Buy at/below</th><th>+2R (arms trail)</th><th>Stop</th><th>Resistance (R:R)</th>'
             '<th>What would make it a BUY</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div>'
-            '<p class="note"><strong>Buy up to</strong> = the highest entry that still gives R:R at or above the minimum '
-            'with the same stop and target; <strong>Buy at/below</strong> = the price a pullback must reach to get there.<br>'
+            '<p class="note"><strong>Exit plan:</strong> initial stop, no profit target. Once price trades at the <strong>+2R</strong> level, '
+            'trail the stop under the daily EMA20 (raise only); leave after 90 trading days at the latest. '
+            '<strong>Resistance (R:R)</strong> is the nearest real resistance, used only to filter entries (R:R at least 1.5).<br>'
+            '<strong>Buy up to</strong> = the highest entry that still gives R:R at or above the minimum '
+            'with the same stop; <strong>Buy at/below</strong> = the price a pullback must reach to get there. '
+            'Only pullbacks in an uptrend are traded (the only setup with a measurable backtest edge); other setups are not shown as BUY.<br>'
             'Sorted by Gap = distance from a BUY (0 = BUY). A missing turn or confirmation counts 1 each, '
             'a price/R:R problem 2-5 depending on how far the entry zone is, an extended stock 2, a failed structural '
             'requirement 3. Conditions are listed in order and must all hold. Turn levels (prior close, session VWAP) '
@@ -4206,9 +4308,17 @@ def main(tickers, fileapp):
       <fileapp>_signal_report_<timestamp>_up.html   - regression channel sloping up
       <fileapp>_signal_report_<timestamp>_down.html - regression channel sloping down
     A ticker is left out entirely only if it fails ALL four checks in
-    report_filter_checks(). Call as main(TICKERS, "name")."""
+    report_filter_checks() - and only when there are at least REPORT_FILTER_MIN_TICKERS
+    (default 20) tickers; a shorter list gets a card for every ticker.
+    Call as main(TICKERS, "name")."""
     sections = {"up": [], "down": []}
     skipped = []  # (ticker, reason) - listed at the bottom of both reports
+    # the 4-check filter only makes sense for a long list; with a short list every ticker gets a card
+    filter_on = len(tickers) >= CONFIGH.get("REPORT_FILTER_MIN_TICKERS", 20)
+    CONFIGH["_filter_active"] = filter_on
+    if not filter_on:
+        print(f"{len(tickers)} tickers (fewer than {CONFIGH.get('REPORT_FILTER_MIN_TICKERS', 20)}): "
+              "the report filter is OFF - every ticker gets a card.")
     PROFILE.clear()
     run_t0 = time.perf_counter()
     prune_cache()
@@ -4238,7 +4348,7 @@ def main(tickers, fileapp):
             _prof_add("indicators & signal (CPU, no network)", ticker, max(elapsed - fetched, 0.0))
             #print_report(report)
             fails = report_filter_checks(report)
-            if all(fails.values()):
+            if filter_on and all(fails.values()):
                 print(f"=== {ticker}: filtered out (fails all 4 checks) ===")
                 return ("skip", "filtered out - fails all 4 checks (no setup, downtrend/range, "
                                 "WAIT, EPS deteriorating)", None, report_to_row(report, "filtered"))
