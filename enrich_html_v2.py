@@ -1507,6 +1507,9 @@ SETUP_DEFAULTS = {
     "OVERNIGHT_FEED_FALLBACKS": (),    # e.g. ("overnight",): feeds tried in order if OVERNIGHT_FEED is refused (403); see alpaca_check.py
     "NTFY_COMPRESS": "auto",           # "auto": zip attachments above NTFY_COMPRESS_ABOVE_MB; True: always; False: never
     "NTFY_COMPRESS_ABOVE_MB": 1.5,
+    "NTFY_LINK": True,                 # upload to a storage topic and send the alert with the file's URL in Click + a button (opens in the phone's browser)
+    "NTFY_STORAGE_TOPIC": None,        # default "<NTFY_TOPIC>-files"; nobody should subscribe to it
+    "NTFY_PDF": "auto",                # send a PDF instead of the .html: "auto" = if Playwright is installed, True = warn if it is not, False = never
     "NTFY_LITE": True,                 # also write <name>_up_lite.html (summary + BUY/WATCH cards) and send it when the full report is big
     "NTFY_LITE_ABOVE_MB": 1.5,
     "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
@@ -3950,6 +3953,66 @@ def _ascii(text: str) -> str:
     return str(text).encode("ascii", "replace").decode("ascii")
 
 
+def html_to_pdf(html_path: str, width_px: int = 1100, max_page_px: int = 19000) -> str | None:
+    '''Render a report to ONE long PDF page (no page breaks through the cards), the format every phone can open.
+    Returns the PDF path, or None when Playwright/Chromium is not installed or rendering fails (the caller then
+    sends the HTML). Install once:  pip install playwright   and   playwright install chromium'''
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        if CONFIGH.get("NTFY_PDF", "auto") is True:
+            print("ntfy: NTFY_PDF is on but Playwright is not installed - sending the HTML. "
+                  "Install it with:  pip install playwright  &&  playwright install chromium")
+        return None
+    pdf_path = os.path.splitext(html_path)[0] + ".pdf"
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": width_px, "height": 900})
+            page.goto("file://" + os.path.abspath(html_path))
+            page.wait_for_timeout(300)
+            page.emulate_media(media="screen")
+            page.add_style_tag(content=".table-wrap{overflow:visible !important} html,body{background:#0f1115 !important}")
+            height = int(page.evaluate("Math.ceil(document.documentElement.scrollHeight)"))
+            page.pdf(path=pdf_path, width=f"{width_px}px", height=f"{min(height + 4, max_page_px)}px", print_background=True,
+                     margin={"top": "0", "bottom": "0", "left": "0", "right": "0"})
+            browser.close()
+        print(f"PDF written to {pdf_path} ({os.path.getsize(pdf_path) / 1024 / 1024:.1f} MB)")
+        return pdf_path
+    except Exception as e:
+        print(f"PDF conversion failed ({type(e).__name__}: {e}) - sending the HTML instead")
+        return None
+
+
+def _ntfy_send_link(path, server, topic, token, title, message, tags, priority, timeout):
+    '''Upload the report to a separate STORAGE topic (nobody subscribes to it), read the attachment URL from ntfy's reply,
+    then publish the real alert on the main topic with that URL in the Click header and a "view" button, so tapping opens
+    it in the phone's browser. ntfy.sh deletes attachments after about 3 hours. Raises on any failure.'''
+    store = (CONFIGH.get("NTFY_STORAGE_TOPIC") or _SECRETS.get("NTFY_STORAGE_TOPIC")
+             or os.environ.get("NTFY_STORAGE_TOPIC") or f"{topic}-files")[:64]
+    auth = {"Authorization": f"Bearer {token}"} if token else {}
+    with open(path, "rb") as f:
+        r = requests.put(f"{server}/{store}", data=f, timeout=timeout,
+                         headers={**auth, "Filename": _ascii(os.path.basename(path)), "Title": "report file (storage)",
+                                  "Priority": "min", "Tags": "file_folder"})
+    r.raise_for_status()
+    att = (r.json() or {}).get("attachment") or {}
+    url = att.get("url")
+    if not url:
+        raise ValueError("ntfy's reply has no attachment URL")
+    body = message or ""
+    if att.get("expires"):
+        body += f"\n(link valid until {datetime.fromtimestamp(att['expires']).strftime('%H:%M')})"
+    hdr = {**auth, "Title": _ascii(title or os.path.basename(path)), "Click": url, "Actions": f"view, Open report, {url}"}
+    if tags:
+        hdr["Tags"] = _ascii(tags)
+    if priority:
+        hdr["Priority"] = _ascii(priority)
+    r2 = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=hdr, timeout=timeout)
+    r2.raise_for_status()
+    return url
+
+
 def send_ntfy_file(path: str, topic: str | None = None, server: str | None = None,
                    token: str | None = None, title: str | None = None, message: str | None = None,
                    tags: str | None = None, priority: str | None = None, timeout: float = 60) -> bool:
@@ -3996,9 +4059,20 @@ def send_ntfy_file(path: str, topic: str | None = None, server: str | None = Non
         r_ = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=timeout)
         r_.raise_for_status()
 
+    if CONFIGH.get("NTFY_LINK", True) and size_mb <= CONFIGH.get("NTFY_MAX_MB", 15):
+        try:
+            url = _ntfy_send_link(path, server, topic, token, title, message, tags, priority, timeout)
+            print(f"ntfy: uploaded {os.path.basename(path)} ({size_mb:.1f} MB) to the storage topic, alert sent with a link: {url}")
+            return True
+        except Exception as e:                                         # RequestException, ValueError, ...
+            print(f"ntfy: the link method failed ({type(e).__name__}: {e}{_reason(e)}) - falling back to an attachment")
+    if CONFIGH.get("NTFY_PDF", "auto") and path.lower().endswith(".html"):
+        pdf_ = html_to_pdf(path)                                       # a PDF opens on any phone
+        if pdf_:
+            path, size_mb = pdf_, os.path.getsize(pdf_) / 1024 / 1024
     mode = CONFIGH.get("NTFY_COMPRESS", "auto")                      # "auto" | True | False
     zip_above = CONFIGH.get("NTFY_COMPRESS_ABOVE_MB", 1.5)
-    use_zip = bool(mode is True or (mode == "auto" and size_mb > zip_above))
+    use_zip = bool((mode is True or (mode == "auto" and size_mb > zip_above)) and not path.lower().endswith(".pdf"))
     to_send, sent_mb = path, size_mb
     tmp_zip = None
     try:
@@ -4019,7 +4093,7 @@ def send_ntfy_file(path: str, topic: str | None = None, server: str | None = Non
             return True
         except requests.RequestException as e:
             print(f"ntfy: attachment {os.path.basename(to_send)} ({sent_mb:.1f} MB) refused: {e}{_reason(e)}")
-            if not use_zip:                                           # retry once, zipped
+            if not use_zip and not to_send.lower().endswith(".pdf"):   # retry once, zipped (a PDF is already compressed)
                 import zipfile
                 tmp_zip = path + ".zip"
                 with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
