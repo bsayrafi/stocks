@@ -72,7 +72,7 @@ large_enrichment_tickers = [
 
 debug_enrichment_tickers = [
 
-  "META", "AAPL", "AMZN", "GOOG", "MSFT", "TSLA", "NVDA", "QCOM", "ARLO",
+  "META", "AAPL", "AMZN", "GOOG", "MSFT", "TSLA", "NVDA", "QCOM", "ARLO", "PSX"
     ]
 
 def run_enrichment(num, runtype="all"):

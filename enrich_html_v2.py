@@ -694,7 +694,18 @@ def _alpaca_bars_window_multi(tickers: list, headers: dict | None, feed: str,
                     break
                 params["page_token"] = token
     except (requests.RequestException, ValueError) as e:
-        print(f"  Alpaca bars unavailable ({feed}, {start:%a %H:%M}-{end:%a %H:%M} ET): {e}")
+        resp_ = getattr(e, "response", None)
+        detail = ""
+        if resp_ is not None:
+            try:
+                detail = f" | Alpaca says: {resp_.text.strip()[:300]}"
+            except Exception:
+                pass
+        hint = ""
+        if feed == "boats" and getattr(resp_, "status_code", None) == 403:
+            hint = (" -> the overnight (boats) feed needs an Alpaca overnight market-data subscription; "
+                    "check the account's data plan, or set OVERNIGHT_ENABLED = False to skip it")
+        print(f"  Alpaca bars unavailable ({feed}, {start:%a %H:%M}-{end:%a %H:%M} ET): {e}{detail}{hint}")
         return None
     for t in out:
         out[t].sort(key=lambda b: b["t"])
@@ -835,11 +846,20 @@ def prefetch_extended_hours(tickers: list, cfg: dict, hourly_by_ticker: dict | N
 
     on_win = cal["on"]
     on_feed = cfg.get("OVERNIGHT_FEED", "boats")
-    on_bars = (_alpaca_bars_window_multi(tickers, headers, on_feed, *on_win, delay, tz)
-               if cfg.get("OVERNIGHT_ENABLED", True) and on_win[0] <= now else None)
+    on_bars = None
+    if cfg.get("OVERNIGHT_ENABLED", True) and on_win[0] <= now:
+        for f in [on_feed] + [x for x in cfg.get("OVERNIGHT_FEED_FALLBACKS", ()) if x != on_feed]:
+            on_bars = _alpaca_bars_window_multi(tickers, headers, f, *on_win, delay, tz)
+            if on_bars is not None:               # None = the request failed (e.g. 403): try the next feed
+                if f != on_feed:
+                    print(f"  overnight: '{on_feed}' failed, using the fallback feed '{f}'")
+                on_feed = f
+                break
+    why = {"boats": "Blue Ocean ATS (thin, ~16 min delayed)",
+           "overnight": "Alpaca derived overnight feed (approximate)"}.get(on_feed, on_feed)
     for t in tickers:
         bars = (on_bars or {}).get(t) or []
-        d = _single_feed_details(bars, on_feed, "Blue Ocean ATS (thin, ~16 min delayed)")
+        d = _single_feed_details(bars, on_feed, why)
         d["status"] = ("disabled" if not cfg.get("OVERNIGHT_ENABLED", True)
                        else "not started yet" if on_win[0] > now
                        else "unavailable" if on_bars is None else status(on_win, bars))
@@ -1484,6 +1504,11 @@ NOT_TRADED_WHY = {
 SETUP_DEFAULTS = {
     # ---- strategy
     "TRADEABLE_SETUPS": ("PULLBACK",),   # the only setup with a measurable edge; add "MA_BOUNCE" / "SUPPORT_BOUNCE" / "MA_RECLAIM" / "FRESH_BREAKOUT" to trade them
+    "OVERNIGHT_FEED_FALLBACKS": (),    # e.g. ("overnight",): feeds tried in order if OVERNIGHT_FEED is refused (403); see alpaca_check.py
+    "NTFY_COMPRESS": "auto",           # "auto": zip attachments above NTFY_COMPRESS_ABOVE_MB; True: always; False: never
+    "NTFY_COMPRESS_ABOVE_MB": 1.5,
+    "NTFY_LITE": True,                 # also write <name>_up_lite.html (summary + BUY/WATCH cards) and send it when the full report is big
+    "NTFY_LITE_ABOVE_MB": 1.5,
     "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
     "TRAIL_ARM_R": 2.0,            # the trailing stop arms once price has gained this many R
     "TRAIL_MA": "EMA20",           # ... and then trails under this daily moving average (raise only)
@@ -3408,7 +3433,8 @@ def _extended_hours_rows(report: dict) -> list:
     if not ext:
         return [("Close / extended hours", "N/A (no Alpaca data)")]
     rows = [(f"Close ({pd.Timestamp(ext['close_date']).strftime('%a %d %b')})", f"{ext['close']:.2f}")]
-    src_names = {"sip": "SIP (all exchanges, ~16 min delayed)", "iex": "IEX live", "boats": "Blue Ocean ATS"}
+    src_names = {"sip": "SIP (all exchanges, ~16 min delayed)", "iex": "IEX live", "boats": "Blue Ocean ATS",
+                 "overnight": "Alpaca derived overnight feed"}
     for key, label in (("ah", "After-hours"), ("on", "Overnight"), ("pm", "Pre-market")):
         d = ext["sessions"].get(key) or {}
         if d.get("price") is None:
@@ -3949,23 +3975,73 @@ def send_ntfy_file(path: str, topic: str | None = None, server: str | None = Non
         headers["Priority"] = _ascii(priority)
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    def _reason(e):
+        r = getattr(e, "response", None)
+        try:
+            return f" | ntfy says: {r.text.strip()[:250]}" if r is not None and r.text else ""
+        except Exception:
+            return ""
+
+    def _put(file_path, base_headers):
+        h = dict(base_headers)
+        h["Filename"] = _ascii(os.path.basename(file_path))
+        if message:
+            h["Message"] = _ascii(message)
+        with open(file_path, "rb") as f:
+            r_ = requests.put(f"{server}/{topic}", data=f, headers=h, timeout=timeout)
+        r_.raise_for_status()
+
+    def _text_only(why):
+        body = (f"{message or ''}\n({os.path.basename(path)}, {size_mb:.1f} MB, not attached: {why})").strip()
+        r_ = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=timeout)
+        r_.raise_for_status()
+
+    mode = CONFIGH.get("NTFY_COMPRESS", "auto")                      # "auto" | True | False
+    zip_above = CONFIGH.get("NTFY_COMPRESS_ABOVE_MB", 1.5)
+    use_zip = bool(mode is True or (mode == "auto" and size_mb > zip_above))
+    to_send, sent_mb = path, size_mb
+    tmp_zip = None
     try:
-        if size_mb > CONFIGH.get("NTFY_MAX_MB", 15):
-            body = (f"{message or ''}\n{os.path.basename(path)} is {size_mb:.1f} MB - too big to attach; "
-                    f"get it from the GitHub Actions run.").strip()
-            resp = requests.post(f"{server}/{topic}", data=body.encode("utf-8"), headers=headers, timeout=timeout)
-        else:
-            headers["Filename"] = _ascii(os.path.basename(path))
-            if message:
-                headers["Message"] = _ascii(message)
-            with open(path, "rb") as f:
-                resp = requests.put(f"{server}/{topic}", data=f, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        print(f"ntfy: sent {os.path.basename(path)} ({size_mb:.1f} MB) to {server}/<topic>")
-        return True
+        if size_mb > CONFIGH.get("NTFY_MAX_MB", 15) and not use_zip:
+            _text_only("too big to attach")
+            print(f"ntfy: {os.path.basename(path)} is {size_mb:.1f} MB - sent the text summary only")
+            return True
+        if use_zip:
+            import zipfile
+            tmp_zip = path + ".zip"
+            with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+                z.write(path, arcname=os.path.basename(path))
+            to_send, sent_mb = tmp_zip, os.path.getsize(tmp_zip) / 1024 / 1024
+        try:
+            _put(to_send, headers)
+            note = f", zipped from {size_mb:.1f} MB" if use_zip else ""
+            print(f"ntfy: sent {os.path.basename(to_send)} ({sent_mb:.1f} MB{note}) to {server}/<topic>")
+            return True
+        except requests.RequestException as e:
+            print(f"ntfy: attachment {os.path.basename(to_send)} ({sent_mb:.1f} MB) refused: {e}{_reason(e)}")
+            if not use_zip:                                           # retry once, zipped
+                import zipfile
+                tmp_zip = path + ".zip"
+                with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+                    z.write(path, arcname=os.path.basename(path))
+                try:
+                    _put(tmp_zip, headers)
+                    print(f"ntfy: sent the zipped report ({os.path.getsize(tmp_zip) / 1024 / 1024:.1f} MB) on the retry")
+                    return True
+                except requests.RequestException as e2:
+                    print(f"ntfy: the zipped retry was refused too: {e2}{_reason(e2)}")
+            _text_only("attachment refused by the server")
+            print("ntfy: sent the text summary only (BUY / WATCH list)")
+            return True
     except requests.RequestException as e:
-        print(f"ntfy: failed to send {os.path.basename(path)}: {e}")
+        print(f"ntfy: failed to send {os.path.basename(path)}: {e}{_reason(e)}")
         return False
+    finally:
+        if tmp_zip and os.path.exists(tmp_zip):
+            try:
+                os.remove(tmp_zip)
+            except OSError:
+                pass
 
 
 def report_to_row(report: dict, report_group: str) -> dict:
@@ -4365,9 +4441,12 @@ def main(tickers, fileapp):
         results = list(ex.map(screen_one, tickers))
 
     csv_rows = [res[3] for res in results if res[3] is not None]
+    lite_cards = []                                   # cards of BUY / WATCH tickers in the up report (for the small ntfy file)
     for ticker, res in zip(tickers, results):
         if res[0] == "ok":
             sections[res[1]].append(res[2])
+            if res[1] == "up" and (res[3] or {}).get("signal") in ("BUY", "WATCH"):
+                lite_cards.append(res[2])
         else:
             skipped.append((ticker, res[1]))
 
@@ -4387,6 +4466,14 @@ def main(tickers, fileapp):
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
         print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
+        if direction == "up" and CONFIGH.get("NTFY_LITE", True):
+            lite_path = out_path.replace("_up.html", "_up_lite.html")
+            lite_body = _setup_summary_card(csv_rows, f"{fileapp}_signal_report_{timestamp}_down.html") + (
+                "\n".join(lite_cards) or '<section class="card"><p class="note">No BUY or WATCH setups.</p></section>')
+            with open(lite_path, "w", encoding="utf-8") as f:
+                f.write(build_html_report(report_title + " (lite: BUY / WATCH only)", lite_body))
+            out_paths["up_lite"] = lite_path
+            print(f"Lite report ({len(lite_cards)} BUY/WATCH cards) written to {lite_path}")
 
     if CONFIGH.get("CSV_REPORT", True):
         csv_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}.csv")
@@ -4403,6 +4490,10 @@ def main(tickers, fileapp):
         counts = {g: sum(1 for r in csv_rows if r.get("report") == g) for g in ("up", "down")}
         for kind in CONFIGH.get("NTFY_FILES", ["up"]):
             path = out_paths.get(kind)
+            if (kind == "up" and CONFIGH.get("NTFY_LITE", True) and path and os.path.exists(path)
+                    and os.path.getsize(path) / 1024 / 1024 > CONFIGH.get("NTFY_LITE_ABOVE_MB", 1.5)
+                    and out_paths.get("up_lite") and os.path.exists(out_paths["up_lite"])):
+                path = out_paths["up_lite"]               # the full report is big: send the BUY / WATCH-only version
             if not path or not os.path.exists(path):
                 continue
             if kind in buys:
