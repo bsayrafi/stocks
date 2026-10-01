@@ -1510,8 +1510,8 @@ SETUP_DEFAULTS = {
     "NTFY_LINK": True,                 # upload to a storage topic and send the alert with the file's URL in Click + a button (opens in the phone's browser)
     "NTFY_STORAGE_TOPIC": None,        # default "<NTFY_TOPIC>-files"; nobody should subscribe to it
     "NTFY_PDF": "auto",                # send a PDF instead of the .html: "auto" = if Playwright is installed, True = warn if it is not, False = never
-    "NTFY_LITE": True,                 # also write <name>_up_lite.html (summary + BUY/WATCH cards) and send it when the full report is big
-    "NTFY_LITE_ABOVE_MB": 1.5,
+    "NTFY_LITE": True,                 # also write <name>_up_lite.html: a phone-friendly list + cards for the BUY / WATCH tickers only
+    "NTFY_LITE_ABOVE_MB": 0.0,         # send the phone version whenever the full report is larger than this (0 = always)
     "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
     "TRAIL_ARM_R": 2.0,            # the trailing stop arms once price has gained this many R
     "TRAIL_MA": "EMA20",           # ... and then trails under this daily moving average (raise only)
@@ -4453,6 +4453,240 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
             + _TIP_SCRIPT + '</section>')
 
 
+
+# ---------------------------------------------------------------- mobile "lite" report
+# A phone-first version of the BUY / WATCH report: one column, big tap targets, no wide tables, no hover tooltips.
+# The list at the top links to a compact card per ticker; detail checks are collapsed.
+
+_M_CSS = """
+:root{color-scheme:dark;--bg:#000;--card:#0c0f14;--card2:#12161d;--border:#232a35;--text:#e8eaed;--muted:#98a2b0;--accent:#9cdcfe;
+--pass:#2ecc71;--fail:#ef5b4d;--warn:#f5b041}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scroll-behavior:smooth;background:#000}
+body{margin:0 auto;background:var(--bg);color:var(--text);
+font:16.5px/1.45 system-ui,Roboto,"Segoe UI",Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums;
+max-width:760px;overflow-wrap:anywhere;
+padding:max(10px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) calc(76px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left))}
+h1{font-size:20px;margin:8px 2px 2px}
+.sub{color:var(--muted);font-size:14px;margin:0 2px 12px}
+a{color:var(--accent)}
+.legend{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:6px 0 12px;font-size:14px;color:var(--muted)}
+.legend b{color:var(--text)}
+a.row{display:block;min-height:64px;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--border);
+border-left:6px solid var(--warn);border-radius:14px;padding:14px 14px 13px;margin:10px 0;touch-action:manipulation;
+-webkit-tap-highlight-color:rgba(156,220,254,.18)}
+a.row:active{background:var(--card2)}
+a.row.buy{border-left-color:var(--pass)}
+.r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tk{font-weight:800;font-size:22px;color:var(--accent);letter-spacing:.2px}
+.px{margin-left:auto;font-weight:700;font-size:19px}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:700;white-space:nowrap}
+.pill.buy{background:rgba(46,204,113,.18);color:var(--pass)}
+.pill.watch{background:rgba(245,176,65,.16);color:var(--warn)}
+.pill.g0,.pill.g1{background:rgba(46,204,113,.14);color:#7bdc9c}
+.pill.g2{background:rgba(245,176,65,.15);color:var(--warn)}
+.pill.g3{background:rgba(239,91,77,.15);color:#ee8a80}
+.r2{color:var(--muted);font-size:15px;margin-top:5px}
+.r3{font-size:15px;margin-top:7px;color:#d9dde3}
+.r3 .need{color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px 14px;margin:18px 0;scroll-margin-top:10px}
+.card.buy{border-top:4px solid var(--pass)}
+.card.watch{border-top:4px solid var(--warn)}
+.ch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.name{color:var(--muted);font-size:15px;margin:3px 0 0}
+.sess{font-size:15px;margin:9px 0 0;line-height:1.75}
+.up{color:var(--pass);font-weight:700}.dn{color:var(--fail);font-weight:700}
+h3{font-size:12.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--accent);margin:18px 0 6px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:16px}
+.kv:last-child{border-bottom:0}
+.kv span:first-child{color:var(--muted)}
+.kv span:last-child{text-align:right;font-weight:600}
+.kv small{display:block;color:var(--muted);font-weight:400;font-size:12.5px}
+.need-list{margin:4px 0 0;padding-left:22px}
+.need-list li{margin:7px 0;font-size:16px}
+.note{color:var(--muted);font-size:14px;margin:6px 0}
+details{background:var(--card2);border:1px solid var(--border);border-radius:12px;margin:10px 0;padding:0 14px}
+summary{cursor:pointer;min-height:52px;padding:14px 0;font-size:15.5px;color:var(--text);list-style:none;display:flex;
+align-items:center;justify-content:space-between;gap:8px;touch-action:manipulation}
+summary span:nth-child(2){margin-left:auto;color:var(--muted)}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";color:var(--muted);font-weight:700;font-size:18px}
+details[open] summary::after{content:"-"}
+.chk{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--border);font-size:15px}
+.chk i{font-style:normal;font-weight:800;width:18px;flex:none}
+.chk.ok i{color:var(--pass)}.chk.no i{color:var(--fail)}
+.top{display:inline-block;margin-top:10px;padding:10px 0;font-size:14px;color:var(--muted);text-decoration:none}
+.fab{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));z-index:5;display:none;width:48px;height:48px;align-items:center;justify-content:center;border-radius:50%;background:rgba(26,31,40,.94);border:1px solid var(--border);color:var(--text);font-size:22px;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(0,0,0,.7);touch-action:manipulation}
+@media (orientation:landscape) and (min-width:760px){
+ body{max-width:1100px}
+ .plan{display:grid;grid-template-columns:1fr 1fr;column-gap:28px}
+ .plan .kv:nth-last-child(2){border-bottom:0}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+"""
+
+
+def build_mobile_report(title: str, body: str) -> str:
+    head, _, tail = title.partition(" - ")
+    h1, sub = (tail, head) if tail else (title, "")
+    script = ("<script>(function(){var f=document.querySelector('.fab');if(!f)return;"
+              "function u(){f.style.display=(window.scrollY>500)?'flex':'none'}u();"
+              "addEventListener('scroll',u,{passive:true})})();</script>")
+    return ('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+            '<meta name="color-scheme" content="dark"><meta name="theme-color" content="#000000">'
+            f"<title>{html.escape(title)}</title><style>{_M_CSS}</style></head>"
+            f'<body id="top"><h1>{html.escape(h1)}</h1>'
+            + (f'<p class="sub" style="margin-bottom:4px">{html.escape(sub)}</p>' if sub else "")
+            + f'{body}<a class="fab" href="#top" aria-label="Back to list">&uarr;</a>{script}</body></html>')
+
+
+def _m_num(v, nd=2):
+    return "" if v is None or (isinstance(v, float) and v != v) else f"{float(v):,.{nd}f}"
+
+
+def _m_sessions(row: dict) -> str:
+    """Price line(s): live / extended-hours price, then the previous session's O/H/L/C (close coloured vs the day before)."""
+    def g(k):
+        v = row.get(k)
+        return None if v is None or (isinstance(v, float) and v != v) else v
+    lines = []
+    if g("market_open") is False and g("current_ext_price") is not None:
+        label = _TIP_SESSIONS.get(g("current_ext_session"), "Extended hours")
+        pct = g("current_ext_pct")
+        pc = ""
+        if pct is not None:
+            pc = f' <span class="{"up" if pct >= 0 else "dn"}">{pct:+.2f}%</span> vs close'
+        lines.append(f"{label}: <b>{float(g('current_ext_price')):,.2f}</b>{pc}")
+    elif g("market_open"):
+        lines.append("Market open")
+    if g("prev_day_open") is not None:
+        c, prior = g("prev_day_close"), g("prev_day_prior_close")
+        cls = "" if prior is None or c == prior else ("up" if c > prior else "dn")
+        nb = lambda t: f'<span style="white-space:nowrap">{t}</span>'
+        lines.append(f'<span class="note">Prev day {html.escape(str(g("prev_day_date")))}:</span> '
+                     + " ".join([nb(f"O {_m_num(g('prev_day_open'))}"), nb(f"H {_m_num(g('prev_day_high'))}"),
+                                 nb(f"L {_m_num(g('prev_day_low'))}"), nb(f'C <span class="{cls}">{_m_num(c)}</span>')]))
+    return "<br>".join(lines)
+
+
+def _m_checks(items) -> str:
+    return "".join(f'<div class="chk {"ok" if ok else "no"}"><i>{"✓" if ok else "✗"}</i><span>{html.escape(str(lbl))}</span></div>'
+                   for lbl, ok in items)
+
+
+def render_mobile_card(report: dict, row: dict) -> str:
+    """Compact phone card for one BUY / WATCH ticker."""
+    sig = report["signal"]
+    tk = report["ticker"]
+    kind = "buy" if sig["signal"] == "BUY" else "watch"
+    px = float(report.get("current_price") or 0)
+    ctx = sig["context"]
+    cfg = report.get("cfg") or CONFIGH
+    name = row.get("name") or ""
+    sector_industry = " · ".join(x for x in (row.get("sector"), row.get("industry")) if x)
+
+    head = (f'<div class="ch"><span class="tk">{html.escape(tk)}</span>'
+            f'<span class="pill {kind}">{sig["signal"]}</span>'
+            + (f'<span class="pill g{0 if (sig.get("distance") or 0) == 0 else 1 if sig["distance"] <= 1.5 else 2 if sig["distance"] <= 3.5 else 3}">'
+               f'gap {sig["distance"]:.1f}</span>' if sig.get("distance") is not None and kind == "watch" else "")
+            + f'<span class="px">{px:,.2f}</span></div>')
+    sub = f'<div class="name">{html.escape(name)}' + (f"<br>{html.escape(sector_industry)}" if sector_industry else "") + "</div>"
+    sess = _m_sessions(row)
+    sess_html = f'<div class="sess">{sess}</div>' if sess else ""
+
+    out = [f'<section class="card {kind}" id="m-{html.escape(tk)}">', head, sub, sess_html]
+
+    out.append(f'<h3>Setup: {html.escape(sig.get("setup_label") or "")}</h3>')
+    out.append(f'<div class="note">{html.escape(sig.get("level_desc") or "")}</div>')
+    ev = SETUP_EVIDENCE.get(sig.get("setup"), "")
+    if ev:
+        out.append(f'<div class="note">{html.escape(ev)}</div>')
+
+    if sig.get("buy_when"):
+        out.append("<h3>What would make it a BUY</h3><ol class=\"need-list\">"
+                   + "".join(f"<li>{html.escape(x)}</li>" for x in sig["buy_when"]) + "</ol>")
+
+    def kv(label, value, small=""):
+        return f'<div class="kv"><span>{label}</span><span>{value}{f"<small>{small}</small>" if small else ""}</span></div>'
+
+    plan = [kv("Initial stop", f"{sig['stop']:.2f}", f"1R = {sig['risk']:.2f} per share"),
+            kv(f"+{cfg['TRAIL_ARM_R']:g}R level (arms the trail)", f"{sig['arm_level']:.2f}"),
+            kv(f"Then trail under daily {cfg['TRAIL_MA']}", f"now {sig['trail_now']:.2f}", "raise only; no profit target"),
+            kv("Exit", f"trail / stop / {cfg['EXIT_MAX_HOLD_DAYS']} days"),
+            kv("Resistance (R:R filter)", f"{sig['target']:.2f}", html.escape(sig.get("target_src") or "")),
+            kv(f"R:R (min {cfg['SETUP_MIN_RR']:g})", f"{sig['rr']:.2f}")]
+    if sig.get("buy_up_to"):
+        plan.append(kv("Buy up to", f"{sig['buy_up_to']:.2f}", f"{(sig['buy_up_to'] / px - 1) * 100:+.1f}% from here" if px else ""))
+    if sig.get("buy_below"):
+        plan.append(kv("Buy at / below", f"{sig['buy_below']:.2f}", f"{(sig['buy_below'] / px - 1) * 100:+.1f}% from here" if px else ""))
+    out.append('<h3>Trade plan</h3><div class="plan">' + "".join(plan) + "</div>")
+
+    n_ok = sum(1 for _, ok in sig.get("turn", []) if ok)
+    out.append(f'<details><summary><span>Turn (daily + 1h)</span><span>{n_ok}/{len(sig.get("turn", []))}</span></summary>'
+               + _m_checks(sig.get("turn", [])) + "</details>")
+    out.append(f'<details><summary><span>Required checks</span><span>{sum(1 for _, ok in sig["required"] if ok)}/{len(sig["required"])}</span></summary>'
+               + _m_checks(sig["required"]) + "</details>")
+    out.append(f'<details><summary><span>Confirmations (need {sig["min_confirms"]})</span>'
+               f'<span>{sig["n_confirms"]}/{len(sig["confirms"])}</span></summary>' + _m_checks(sig["confirms"]) + "</details>")
+
+    lows, highs = ctx.get("last_swing_lows"), ctx.get("last_swing_highs")
+    out.append('<details><summary><span>Trend context</span><span>' + html.escape(ctx["state"].replace("_", " ").title()) + "</span></summary>"
+               + kv("Close vs EMA50", f"{ctx['close']} vs {ctx['ema50']}", f"{ctx['ext_ema50_atr']:+.1f} ATR")
+               + kv("EMA50 slope (5d)", "n/a" if ctx.get("ema50_slope_pct") is None else f"{ctx['ema50_slope_pct']:+.2f}%")
+               + kv("Higher lows", "yes" if ctx["higher_lows"] else "no", html.escape(str(lows)) if lows else "")
+               + kv("Higher highs", "yes" if ctx["higher_highs"] else "no", html.escape(str(highs)) if highs else "")
+               + "</details>")
+
+    cat = report.get("catalysts") or {}
+    if cat.get("next_earnings_date"):
+        d = cat.get("days_to_earnings")
+        flag = " - IN WINDOW" if cat.get("in_earnings_window") else ""
+        out.append(f'<div class="note">Next earnings: {html.escape(str(cat["next_earnings_date"]))}'
+                   + (f" ({d:+d}d)" if d is not None else "") + flag + "</div>")
+    out.append('<a class="top" href="#top">&uarr; back to list</a></section>')
+    return "".join(out)
+
+
+def mobile_summary(rows: list) -> str:
+    """Top of the phone report: one tappable row per BUY / WATCH ticker, closest to a BUY first."""
+    picks = [r for r in rows if r.get("signal") in ("BUY", "WATCH") and r.get("report") == "up"]
+    if not picks:
+        return '<div class="legend">No BUY or WATCH setups right now.</div>'
+
+    def gap(r):
+        v = r.get("setup_distance")
+        return 99.0 if v is None or v != v else float(v)
+    picks.sort(key=lambda r: (r["signal"] != "BUY", gap(r), -(r.get("setup_rr") or 0)))
+    n_buy = sum(1 for r in picks if r["signal"] == "BUY")
+    out = [f'<p class="sub">{n_buy} BUY &middot; {len(picks) - n_buy} WATCH &middot; closest to a BUY first. Tap a row for the full card.</p>',
+           '<div class="legend"><b>Exit plan:</b> initial stop, no profit target. After +2R trail the stop under the daily EMA20 '
+           '(raise only), leave after 90 trading days. <b>Gap</b> = distance from a BUY (0 = BUY). Only pullbacks in an uptrend are traded.</div>']
+    for r in picks:
+        kind = "buy" if r["signal"] == "BUY" else "watch"
+        g = gap(r)
+        gcls = "g0" if g == 0 else "g1" if g <= 1.5 else "g2" if g <= 3.5 else "g3"
+        items = [x for x in str(r.get("setup_buy_when") or "").split(" | ") if x]
+        r3 = ""
+        if kind == "buy":
+            r3 = (f"Buy up to <b>{_m_num(r.get('setup_buy_up_to'))}</b> &middot; +2R {_m_num(r.get('setup_arm_level'))}"
+                  if r.get("setup_buy_up_to") else f"+2R {_m_num(r.get('setup_arm_level'))}")
+        elif items:
+            more = f' <span class="note">(+{len(items) - 1} more)</span>' if len(items) > 1 else ""
+            r3 = f'<span class="need">Needs:</span> {html.escape(items[0])}{more}'
+        out.append(
+            f'<a class="row {kind}" href="#m-{html.escape(str(r["ticker"]))}">'
+            f'<div class="r1"><span class="tk">{html.escape(str(r["ticker"]))}</span>'
+            f'<span class="pill {kind}">{r["signal"]}</span>'
+            + (f'<span class="pill {gcls}">gap {g:.1f}</span>' if kind == "watch" and g != 99.0 else "")
+            + f'<span class="px">{_m_num(r.get("current_price"))}</span></div>'
+            f'<div class="r2">{html.escape(str(r.get("setup_label") or ""))} &middot; R:R {_m_num(r.get("setup_rr"))} '
+            f'&middot; stop {_m_num(r.get("setup_stop"))}</div>'
+            + (f'<div class="r3">{r3}</div>' if r3 else "") + "</a>")
+    return "".join(out)
+
+
+
 def main(tickers, fileapp):
     """Screen a list of tickers and write two HTML reports:
       <fileapp>_signal_report_<timestamp>_up.html   - regression channel sloping up
@@ -4502,8 +4736,14 @@ def main(tickers, fileapp):
                 print(f"=== {ticker}: filtered out (fails all 4 checks) ===")
                 return ("skip", "filtered out - fails all 4 checks (no setup, downtrend/range, "
                                 "WAIT, EPS deteriorating)", None, report_to_row(report, "filtered"))
-            return ("ok", report["trend_dir"], render_ticker_html(report),
-                    report_to_row(report, report["trend_dir"]))
+            row_ = report_to_row(report, report["trend_dir"])
+            mobile_ = None
+            if report["signal"]["signal"] in ("BUY", "WATCH"):
+                try:
+                    mobile_ = render_mobile_card(report, row_)
+                except Exception as e_:                       # never let the phone card break the run
+                    print(f"  {ticker}: mobile card failed ({type(e_).__name__}: {e_})")
+            return ("ok", report["trend_dir"], render_ticker_html(report), row_, mobile_)
         except Exception as e:
             print(f"\n=== {ticker}: skipped due to error ===")
             print(f"  {type(e).__name__}: {e}")
@@ -4520,7 +4760,7 @@ def main(tickers, fileapp):
         if res[0] == "ok":
             sections[res[1]].append(res[2])
             if res[1] == "up" and (res[3] or {}).get("signal") in ("BUY", "WATCH"):
-                lite_cards.append(res[2])
+                lite_cards.append((len(res) > 4 and res[4]) or res[2])      # phone card (desktop card as a fallback)
         else:
             skipped.append((ticker, res[1]))
 
@@ -4542,10 +4782,10 @@ def main(tickers, fileapp):
         print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
         if direction == "up" and CONFIGH.get("NTFY_LITE", True):
             lite_path = out_path.replace("_up.html", "_up_lite.html")
-            lite_body = _setup_summary_card(csv_rows, f"{fileapp}_signal_report_{timestamp}_down.html") + (
-                "\n".join(lite_cards) or '<section class="card"><p class="note">No BUY or WATCH setups.</p></section>')
+            lite_body = mobile_summary(csv_rows) + (
+                "\n".join(lite_cards) if lite_cards else "")
             with open(lite_path, "w", encoding="utf-8") as f:
-                f.write(build_html_report(report_title + " (lite: BUY / WATCH only)", lite_body))
+                f.write(build_mobile_report(f"{fileapp} {timestamp} - BUY / WATCH", lite_body))
             out_paths["up_lite"] = lite_path
             print(f"Lite report ({len(lite_cards)} BUY/WATCH cards) written to {lite_path}")
 
