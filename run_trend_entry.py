@@ -41,8 +41,10 @@ my_filters = {
           'Market Cap.': '+Mid (over $2bln)',
           'Float Short': 'Under 20%',
           'Analyst Recom.': 'Hold or better',
-          'Average Volume': 'Over 1M',
-          '200-Day Simple Moving Average': 'Price above SMA200',
+          'Average Volume': 'Over 750K',
+          'P/E': 'Under 50',
+          'Forward P/E': 'Under 50',
+          'InstitutionalTransactions': 'Positive (>0%)',
     }
 
 
