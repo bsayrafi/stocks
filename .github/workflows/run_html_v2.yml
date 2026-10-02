@@ -19,7 +19,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-# Step 2: Set up Python
+      # Step 2: Set up Python
       - name: Set up Python 3.10
         id: py
         uses: actions/setup-python@v5
@@ -51,7 +51,27 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
   
+      # Step 3d: Today's date in UTC. The runner clock is UTC, so this matches
+      # date.today() inside tickersV2.py - both roll over at the same moment.
+      - name: Get cache date
+        id: cachedate
+        run: echo "today=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      # Step 3e: Restore the newest cache saved earlier TODAY (if any).
+      # Cache keys are immutable, so each run saves under its own run_id and
+      # we restore by prefix - GitHub returns the most recent match.
+      # No match (first run of the day) -> empty finviz_cache/ -> Finviz is fetched.
+      # Only the Finviz screener cache lives in finviz_cache/ - the cache/ folder
+      # used by the rest of the code is NOT restored and starts empty every run.
+      - name: Restore daily Finviz cache
+        uses: actions/cache/restore@v4
+        with:
+          path: finviz_cache
+          key: finviz-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
+          restore-keys: |
+            finviz-cache-${{ steps.cachedate.outputs.today }}-
+
+            
       # Step 4: Run your cleaned Python script
       - name: Run HTML V2 Script
         env:
@@ -62,6 +82,7 @@ jobs:
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          FINVIZ_CACHE_DIR: ${{ github.workspace }}/finviz_cache
 
         # IMPORTANT: Make sure this matches the exact name of your main script file
         run: |
@@ -70,14 +91,14 @@ jobs:
           mkdir -p cache
           python run_trend_entry.py
 
-      # Step 4.2: Save this run's cache for later runs today (also if the script failed partway)
-      - name: Save daily cache
+      # Step 4.2: Save the Finviz screener cache for later runs today
+      - name: Save daily Finviz cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: cache
-          key: screener-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
-
+          path: finviz_cache
+          key: finviz-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
+          
       # Step 4.5: Generate the date (Day-Month)
       - name: Get current date
         run: echo "DATE=$(date +'%m_%d_%H')" >> $GITHUB_ENV
