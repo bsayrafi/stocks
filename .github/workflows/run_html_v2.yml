@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # Step 1: Download your repository files (including your custom .py files)
+      # Step 1: Download your repository files (including your custom .py files and cache_store.py)
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -50,9 +50,9 @@ jobs:
         run: |
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
-  
+
       # Step 3d: Today's date in UTC. The runner clock is UTC, so this matches
-      # date.today() inside tickersV2.py - both roll over at the same moment.
+      # date.today() in cache_store.py - both roll over at the same moment.
       - name: Get cache date
         id: cachedate
         run: echo "today=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
@@ -60,18 +60,18 @@ jobs:
       # Step 3e: Restore the newest cache saved earlier TODAY (if any).
       # Cache keys are immutable, so each run saves under its own run_id and
       # we restore by prefix - GitHub returns the most recent match.
-      # No match (first run of the day) -> empty finviz_cache/ -> Finviz is fetched.
-      # Only the Finviz screener cache lives in finviz_cache/ - the cache/ folder
-      # used by the rest of the code is NOT restored and starts empty every run.
-      - name: Restore daily Finviz cache
+      # No match (first run of the day) -> empty htmlv2cache/ -> everything is fetched.
+      # htmlv2cache/ holds the WHOLE shared cache (cache_store.py): the Finviz screener result,
+      # yfinance .info / analyst / earnings per ticker, the S&P 500 list, news (1 h) and
+      # finished Alpaca extended-hours windows.
+      - name: Restore daily cache
         uses: actions/cache/restore@v4
         with:
-          path: finviz_cache
-          key: finviz-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
+          path: htmlv2cache
+          key: htmlv2cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
           restore-keys: |
-            finviz-cache-${{ steps.cachedate.outputs.today }}-
+            htmlv2cache-${{ steps.cachedate.outputs.today }}-
 
-            
       # Step 4: Run your cleaned Python script
       - name: Run HTML V2 Script
         env:
@@ -82,26 +82,27 @@ jobs:
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          FINVIZ_CACHE_DIR: ${{ github.workspace }}/finviz_cache
+          # The one shared cache folder for every script (read by cache_store.py)
+          CACHE_DIR: ${{ github.workspace }}/htmlv2cache
 
         # IMPORTANT: Make sure this matches the exact name of your main script file
         run: |
           mkdir -p reports
           mkdir -p data
-          mkdir -p cache
+          mkdir -p htmlv2cache
           python run_trend_entry.py
 
-      # Step 4.2: Save the Finviz screener cache for later runs today
-      - name: Save daily Finviz cache
+      # Step 4.2: Save the cache for later runs today (also after a failed run: what was fetched is kept)
+      - name: Save daily cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: finviz_cache
-          key: finviz-cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
-          
+          path: htmlv2cache
+          key: htmlv2cache-${{ steps.cachedate.outputs.today }}-${{ github.run_id }}
+
       # Step 4.5: Generate the date (Day-Month)
       - name: Get current date
-        run: echo "DATE=$(date +'%m_%d_%H')" >> $GITHUB_ENV
+        run: echo "DATE=$(date +'%m_%d_%H_%M')" >> $GITHUB_ENV
 
       # Step 5: Save the generated Excel files as Artifacts
       - name: Upload Reports Output
