@@ -99,6 +99,7 @@ def fetch_tickers(my_filters, force_refresh=False):
     df = None if force_refresh else _load_cache(my_filters)
 
     if df is None:
+        print("cache miss; fetching from Finviz...")
         df = _fetch_screener_df(my_filters)
         if df is None or df.empty:
             print("No tickers matched the current filters.")
