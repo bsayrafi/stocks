@@ -1553,7 +1553,7 @@ SETUP_DEFAULTS = {
     "DIP_TAIL_MAX_RVOL": 1.0,      # volume must be fading AND the last dip days at/below this multiple of normal volume
     "OVERHEAD_MIN_TOUCHES": 2,     # a swing level inside MIN_TARGET_ATR blocks the target when it has >= this many touches
     "WATCH_CONFIRM_GAP": 1,        # WATCH = required checks pass and confirmations are within this many of the minimum
-    "GROUP_BY_SETUP": True,        # BUY/WATCH tickers go to the _up report even if the 1h channel slopes down
+    "GROUP_BY_SETUP": True,        # any traded setup (BUY/WATCH/WAIT) goes to the _up report even if the 1h channel slopes down
     "MAX_EXT_ATR": 3.0,            # non-breakout setups are rejected if price is this far above EMA50
     # ---- context
     "RECLAIM_MAX_DAYS": 6,         # EARLY_UPTREND = price closed above EMA50 for 1..N days after being below
@@ -2705,9 +2705,11 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         day_sr["target"] = {"price": signal["target"], "r": signal["rr"], "source": signal["target_src"],
                             "below_min_r": signal["rr"] < cfg["SETUP_MIN_RR"]}
         chart["daily"]["sr"] = day_sr
-    # a pullback BUY/WATCH often has a falling 1h channel; don't hide it in the _down report
-    if cfg.get("GROUP_BY_SETUP", True) and signal["signal"] in ("BUY", "WATCH") and trend_dir != "up":
-        trend_reason = f"{signal['signal']} setup overrides the 1h channel ({trend_reason})"
+    # A pullback pushes the 1h channel down almost by definition, so the channel would
+    # hide exactly the setups we trade. Any traded setup (BUY, WATCH or a still-forming
+    # WAIT) goes to the _up report; the channel is only used for tickers with no setup.
+    if cfg.get("GROUP_BY_SETUP", True) and signal["setup"] is not None and trend_dir != "up":
+        trend_reason = f"{signal['setup_label']} ({signal['signal']}) overrides the 1h channel ({trend_reason})"
         trend_dir = "up"
     fundamentals = fetch_fundamentals(tk, info=info)
     analyst = daily_cached(
@@ -3828,6 +3830,8 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .summary-table tbody tr:hover td {{ background: #2d3a52; }}
   .summary-table tr.buy-row td:first-child {{ border-left: 4px solid var(--buy); }}
   .summary-table tr.watch-row td:first-child {{ border-left: 4px solid #f5b041; }}
+  .summary-table tr.wait-row td:first-child {{ border-left: 4px solid #556070; }}
+  .summary-table tr.wait-row td, .summary-table tr.wait-row a.tk, .summary-table tr.wait-row .px-closed {{ color: #6b7585; }}
   .summary-table td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
   .summary-table th:nth-child(n+4):nth-child(-n+10) {{ text-align: right; }}
   .summary-table td.buywhen {{ line-height: 1.55; min-width: 360px; color: #cfd6e0; }}
@@ -3841,6 +3845,7 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .ext .neg {{ color: var(--fail); font-weight: 600; }}
   .px-closed {{ color: var(--muted); }}
   .badge.watch {{ background: rgba(245,176,65,0.15); color: #f5b041; }}
+  .badge.wait {{ background: rgba(85,96,112,0.25); color: #8a93a0; }}
 
   table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
   th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }}
@@ -4465,14 +4470,18 @@ def _card_id(ticker) -> str:
 def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
     """One table at the top of the _up report: every BUY and WATCH with its entry zone,
     breakout level, stop, target and the concrete conditions that would turn it into a BUY."""
-    picks = [r for r in rows if r.get("signal") in ("BUY", "WATCH")]
+    # BUY and WATCH first, then traded setups that are still forming (WAIT with a setup), greyed out at the bottom
+    picks = [r for r in rows if r.get("signal") in ("BUY", "WATCH")
+             or (r.get("signal") == "WAIT" and r.get("setup") is not None)]
     if not picks:
         return ""
+    n_forming = sum(1 for r in picks if r["signal"] == "WAIT")
     def gap(r):
         v = r.get("setup_distance")
         return 99.0 if v is None or v != v else float(v)
-    # closest to a BUY first: BUYs, then the smallest gap; ties -> better R:R first
-    picks.sort(key=lambda r: (r["signal"] != "BUY", gap(r), -(r.get("setup_rr") or 0)))
+    # closest to a BUY first: BUYs, then WATCH, then forming (WAIT); inside each the smallest gap, ties -> better R:R
+    rank = {"BUY": 0, "WATCH": 1, "WAIT": 2}
+    picks.sort(key=lambda r: (rank[r["signal"]], gap(r), -(r.get("setup_rr") or 0)))
 
     def f(v):
         return "" if v is None or (isinstance(v, float) and v != v) else f"{v:.2f}"
@@ -4484,7 +4493,7 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
         else:
             items = [x for x in str(r.get("setup_buy_when") or "").split(" | ") if x]
             waiting = "<br>".join("&bull; " + html.escape(x) for x in items) or html.escape(str(r.get("setup_fails") or ""))
-        cls = "pass" if r["signal"] == "BUY" else "watch"
+        cls = {"BUY": "pass", "WATCH": "watch"}.get(r["signal"], "wait")
         g = gap(r)
         gcls = "g0" if g == 0 else "g1" if g <= 1.5 else "g2" if g <= 3.5 else "g3"
         gap_html = "" if g == 99.0 else f'<span class="gap {gcls}">{g:.1f}</span>'
@@ -4495,7 +4504,7 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
         tip = html.escape(_ticker_tip(r), quote=True)
         tk_html = (f'<a class="tk" href="{html.escape(href)}" data-tip="{tip}">{tk}</a>' if href
                    else f'<strong data-tip="{tip}">{tk}</strong>')
-        body += (f'<tr class="{"buy-row" if r["signal"] == "BUY" else "watch-row"}">'
+        body += (f'<tr class="{ {"BUY": "buy-row", "WATCH": "watch-row"}.get(r["signal"], "wait-row") }">'
                  f"<td>{tk_html}</td>"
                  f"<td><span class=\"badge {cls}\">{r['signal']}</span></td>"
                  f"<td style=\"white-space:nowrap\">{html.escape(str(r.get('setup') or '').replace('_', ' ').capitalize())}</td>"
@@ -4505,7 +4514,9 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
                  f'<td class="num">{f(r.get("setup_buy_below"))}</td>'
                  f'<td class="num">{f(r.get("setup_stop"))}</td><td class="num">{f(r.get("setup_target"))}</td>'
                  f'<td class="buywhen">{waiting}</td></tr>')
-    return (f'<section class="card"><h2>Setups at a glance ({len(picks)})</h2>'
+    n_active = len(picks) - n_forming
+    count = f"{n_active}" + (f" + {n_forming} forming" if n_forming else "")
+    return (f'<section class="card"><h2>Setups at a glance ({count})</h2>'
             '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Ticker</th><th>Signal</th><th>Setup</th><th>Price</th><th>R:R</th><th>Gap</th><th>Buy up to</th>'
             '<th>Buy at/below</th><th>Stop</th><th>Resistance (R:R)</th>'
             '<th>What would make it a BUY</th></tr></thead>'
@@ -4516,7 +4527,8 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
             '<strong>Buy up to</strong> = the highest entry that still gives R:R at or above the minimum '
             'with the same stop; <strong>Buy at/below</strong> = the price a pullback must reach to get there. '
             'Only pullbacks in an uptrend are traded (the only setup with a measurable backtest edge); other setups are not shown as BUY.<br>'
-            'Sorted by Gap = distance from a BUY (0 = BUY). A missing turn or confirmation counts 1 each, '
+            '<strong>Greyed rows (WAIT)</strong> = a traded setup that is still forming: too many items fail for a WATCH yet.<br>'
+            'Sorted by signal (BUY, WATCH, WAIT), then by Gap = distance from a BUY (0 = BUY). A missing turn or confirmation counts 1 each, '
             'a price/R:R problem 2-5 depending on how far the entry zone is, an extended stock 2, a failed structural '
             'requirement 3. Conditions are listed in order and must all hold. Turn levels (prior close, session VWAP) '
             'move during the day. Hover a ticker for company, sector, industry, price and the previous day.</p>'
@@ -5065,8 +5077,8 @@ def mobile_summary(rows: list) -> str:
 
 def main(tickers, fileapp):
     """Screen a list of tickers and write two HTML reports:
-      <fileapp>_signal_report_<timestamp>_up.html   - regression channel sloping up
-      <fileapp>_signal_report_<timestamp>_down.html - regression channel sloping down
+      <fileapp>_signal_report_<timestamp>_up.html   - any traded setup, or no setup but a rising 1h channel
+      <fileapp>_signal_report_<timestamp>_down.html - no traded setup and a falling or weak 1h channel
     A ticker is left out entirely only if it fails ALL four checks in
     report_filter_checks() - and only when there are at least REPORT_FILTER_MIN_TICKERS
     (default 20) tickers; a shorter list gets a card for every ticker.
