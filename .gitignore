@@ -10,5 +10,7 @@ __pycache__/
 .env
 reports/
 data/
+htmlv2cache/
+
 
 

@@ -9,57 +9,18 @@ import requests
 from finvizfinance.screener.overview import Overview
 from constants import *
 from benchmarks import build_benchmark_map
+from cache_store import daily_cached
 
 
-# Cache location, in priority order:
-#   1. FINVIZ_CACHE_DIR environment variable (set by the GitHub Actions workflow)
-#   2. CONFIG["FINVIZ_CACHE_DIR"]
-#   3. ./cache next to this script
-CACHE_DIR = (
-    os.environ.get("FINVIZ_CACHE_DIR")
-    or CONFIG.get("FINVIZ_CACHE_DIR")
-    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "finviz_cache")
-)
+# The Finviz result is kept in the shared daily cache (cache_store.py) - the same folder and rules as the screener's
+# cache. Location: CACHE_DIR / FINVIZ_CACHE_DIR environment variable (e.g. the GitHub Actions workflow), else
+# CONFIG["CACHE_DIR"] / CONFIG["FINVIZ_CACHE_DIR"], else an "htmlv2cache" folder next to the scripts.
+# One file per filter set per day, so changing the filters forces a refetch.
 
 
-def _cache_path(my_filters):
-    """One cache file per distinct filter set, so changing filters forces a refetch."""
+def _filters_key(my_filters):
     key = json.dumps(my_filters, sort_keys=True)
-    digest = hashlib.md5(key.encode("utf-8")).hexdigest()[:12]
-    return os.path.join(CACHE_DIR, f"screener_{digest}.json")
-
-
-def _load_cache(my_filters):
-    """Return the cached DataFrame if it was fetched today, else None."""
-    path = _cache_path(my_filters)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if payload.get("date") != date.today().isoformat():
-            return None
-        df = pd.DataFrame(payload["rows"])
-        print(f"Using cached Finviz results from {payload.get('fetched_at')} ({len(df)} tickers)")
-        return df
-    except Exception as e:
-        print(f"Ignoring unreadable cache {path} ({e})")
-        return None
-
-
-def _save_cache(my_filters, df):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    payload = {
-        "date": date.today().isoformat(),
-        "fetched_at": datetime.now().isoformat(timespec="seconds"),
-        "filters": my_filters,
-        "rows": df[["Ticker", "Price"]].to_dict(orient="records"),
-    }
-    path = _cache_path(my_filters)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
-    os.replace(tmp, path)  # atomic, so a crash never leaves a half-written cache
+    return hashlib.md5(key.encode("utf-8")).hexdigest()[:12]
 
 
 def _fetch_screener_df(my_filters):
@@ -96,15 +57,25 @@ def fetch_tickers(my_filters, force_refresh=False):
             by 3, the lower groups get the extra ticker(s), so sizes differ by
             at most 1.
     """
-    df = None if force_refresh else _load_cache(my_filters)
+    fetched = []
 
-    if df is None:
+    def fetch():
         print("cache miss; fetching from Finviz...")
-        df = _fetch_screener_df(my_filters)
-        if df is None or df.empty:
-            print("No tickers matched the current filters.")
-            return [], [], []
-        _save_cache(my_filters, df)
+        fetched.append(True)
+        raw = _fetch_screener_df(my_filters)
+        if raw is None or raw.empty:
+            return None
+        return {"fetched_at": datetime.now().isoformat(timespec="seconds"), "filters": my_filters,
+                "rows": raw[["Ticker", "Price"]].to_dict(orient="records")}
+
+    payload = daily_cached("finviz", _filters_key(my_filters), fetch,
+                           is_valid=lambda p: bool(p and p.get("rows")), refresh=force_refresh)
+    if not payload or not payload.get("rows"):
+        print("No tickers matched the current filters.")
+        return [], [], []
+    df = pd.DataFrame(payload["rows"])
+    if not fetched:
+        print(f"Using cached Finviz results from {payload.get('fetched_at')} ({len(df)} tickers)")
 
     if df.empty:
         print("No tickers matched the current filters.")

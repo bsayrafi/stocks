@@ -93,86 +93,42 @@ get_earnings_and_ratings = _profiled("earnings date + upgrades (yf)")(get_earnin
 
 
 # ---------------------------------------------------------------- daily disk cache
-# Data that changes at most once a day (yfinance .info, analyst data, earnings
-# date + rating actions, S&P 500 list) is saved to CACHE_DIR, one file per
-# ticker per day. A second run the same day reads it from disk instead of the
-# network. Files from earlier days are deleted automatically.
-_cache_lock = threading.Lock()
+# Data that changes at most once a day (yfinance .info, analyst data, earnings date + rating actions, S&P 500 list,
+# finished extended-hours windows) is cached on disk by cache_store.py - the SAME cache tickersV2.py uses for the
+# Finviz screener. Where it lives: see cache_store.py (CACHE_DIR / FINVIZ_CACHE_DIR environment variable first, then
+# CONFIGH["CACHE_DIR"], then constants.CONFIG, then an "htmlv2cache" folder next to the scripts). Old days are deleted.
+import cache_store
+
+
+def _cache_sync() -> None:
+    """Pass this script's settings to the shared cache (cheap; called before every cache use)."""
+    cache_store.configure(dir=CONFIGH.get("CACHE_DIR"), enabled=CONFIGH.get("CACHE_ENABLED", True),
+                          hook=lambda ev, name, key: _prof_add(
+                              "  cache hits (read from disk)" if ev == "hit" else "  cache misses (fetched)", key, 0.0))
 
 
 def _cache_path(name: str, key: str) -> str:
-    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)
-    return os.path.join(CONFIGH.get("CACHE_DIR", "cache"), f"{dt.date.today():%Y%m%d}_{name}_{safe}.pkl")
+    _cache_sync()
+    return cache_store.cache_path(name, key)
+
+
+def _cache_write(path: str, obj) -> None:
+    cache_store.write(path, obj)
 
 
 def daily_cached(name: str, key: str, fn, is_valid=bool):
-    """Return today's cached value for (name, key), or call fn(), cache the
-    result if is_valid(result), and return it. Failures are never cached."""
-    if not CONFIGH.get("CACHE_ENABLED", True):
-        return fn()
-    path = _cache_path(name, key)
-    try:
-        with open(path, "rb") as f:
-            value = pickle.load(f)
-        _prof_add("  cache hits (read from disk)", key, 0.0)
-        return value
-    except (OSError, pickle.PickleError, EOFError):
-        pass
-    value = fn()
-    if is_valid(value):
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = f"{path}.{threading.get_ident()}.tmp"
-            with open(tmp, "wb") as f:
-                pickle.dump(value, f)
-            os.replace(tmp, path)   # atomic, so parallel workers never read half a file
-        except OSError:
-            pass
-    return value
+    _cache_sync()
+    return cache_store.daily_cached(name, key, fn, is_valid)
 
 
 def ttl_cached(name: str, key: str, fn, ttl_minutes: float, is_valid=lambda v: v is not None):
-    """Like daily_cached, but a cached value is only reused while it is younger
-    than ttl_minutes (e.g. news: 60). The fetch time is stored INSIDE the cache
-    file, so the age stays correct even when the folder is copied or restored
-    (e.g. GitHub Actions' cache), which can reset file modification times."""
-    if not CONFIGH.get("CACHE_ENABLED", True) or not ttl_minutes:
-        return fn()
-    path = _cache_path(name, key)
-    try:
-        with open(path, "rb") as f:
-            saved_at, value = pickle.load(f)
-        if time.time() - saved_at < ttl_minutes * 60:
-            _prof_add("  cache hits (read from disk)", key, 0.0)
-            return value
-    except (OSError, pickle.PickleError, EOFError, TypeError, ValueError):
-        pass
-    value = fn()
-    if is_valid(value):
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = f"{path}.{threading.get_ident()}.tmp"
-            with open(tmp, "wb") as f:
-                pickle.dump((time.time(), value), f)
-            os.replace(tmp, path)
-        except OSError:
-            pass
-    return value
+    _cache_sync()
+    return cache_store.ttl_cached(name, key, fn, ttl_minutes, is_valid)
 
 
 def prune_cache() -> None:
-    """Delete cache files from previous days."""
-    d = CONFIGH.get("CACHE_DIR", "cache")
-    today = f"{dt.date.today():%Y%m%d}_"
-    try:
-        for fn in os.listdir(d):
-            if fn.endswith(".pkl") and not fn.startswith(today):
-                try:
-                    os.remove(os.path.join(d, fn))
-                except OSError:
-                    pass
-    except OSError:
-        pass
+    _cache_sync()
+    cache_store.prune(verbose=True)
 
 
 # ---------------------------------------------------------------- Finnhub rate limit
@@ -288,7 +244,7 @@ CONFIGH = {
     "PROFILE": True,               # print a timing breakdown at the end of main()
     "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
     "CACHE_ENABLED": True,         # cache once-a-day data (.info, analyst, earnings...) on disk
-    "CACHE_DIR": "cache",
+    "CACHE_DIR": None,             # None = shared default (see cache_store.py); a CACHE_DIR / FINVIZ_CACHE_DIR env var wins
     "FINNHUB_MAX_PER_MIN": 55,     # Finnhub free tier allows 60 calls/minute
     "CATALYST_NEWS_DAYS": 14,      # headlines scanned for buyback/guidance keywords
     "HHHL_DAYS": 20,               # window for the higher-high/higher-low day count (completed daily bars)
@@ -794,6 +750,29 @@ def _single_feed_details(bars: list, feed: str, reason: str) -> dict:
             "trades": sum(b.get("n", 0) for b in bars), "volume": sum(b.get("v", 0) for b in bars)}
 
 
+def _ext_window_cached(name: str, tickers: list, fetch, win: tuple, delay_min: int, now: pd.Timestamp):
+    """Alpaca bars for one extended-hours window. Once the window is over (plus the feed's delay) its bars can no
+    longer change, so they are kept in the daily cache (one file per window and feed) and only tickers not yet in
+    that file are requested. Windows still in progress are always fetched live."""
+    done = win[1] + pd.Timedelta(minutes=delay_min or 0) <= now
+    if not done or not CONFIGH.get("CACHE_ENABLED", True):
+        return fetch(tickers)
+    path = _cache_path("ext", f"{name}_{win[0]:%Y%m%d%H%M}")
+    stored = cache_store.read(path, {})
+    if not isinstance(stored, dict):
+        stored = {}
+    missing = [t for t in tickers if t not in stored]
+    if missing:
+        got = fetch(missing)
+        if got is None:                           # request failed: use what is cached, if anything
+            return {t: stored.get(t, []) for t in tickers} if stored else None
+        stored.update(got)
+        _cache_write(path, stored)
+    if not missing:
+        _prof_add("  ext-hours windows from cache", name, 0.0)
+    return {t: stored.get(t, []) for t in tickers}
+
+
 @_profiled("extended hours (Alpaca batch, all tickers)")
 def prefetch_extended_hours(tickers: list, cfg: dict, hourly_by_ticker: dict | None = None) -> dict | None:
     """After-hours, overnight and pre-market prices for ALL tickers in a few
@@ -823,18 +802,21 @@ def prefetch_extended_hours(tickers: list, cfg: dict, hourly_by_ticker: dict | N
             return "not started yet"
         return "ok" if bars else "no trades"
 
-    def two_feed(win):
+    def one(key, win, f, dly):
+        return _ext_window_cached(f"{key}_{f}", tickers,
+                                  lambda ts: _alpaca_bars_window_multi(ts, headers, f, *win, dly, tz), win, dly, now)
+
+    def two_feed(key, win):
         if win[0] > now:
             return None, None
         if feed == "auto":
-            return (_alpaca_bars_window_multi(tickers, headers, "sip", *win, delay, tz),
-                    _alpaca_bars_window_multi(tickers, headers, "iex", *win, 0, tz))
-        return (_alpaca_bars_window_multi(tickers, headers, feed, *win, delay if feed == "sip" else 0, tz), None)
+            return one(key, win, "sip", delay), one(key, win, "iex", 0)
+        return one(key, win, feed, delay if feed == "sip" else 0), None
 
     by_ticker = {t: {} for t in tickers}
     for key in ("ah", "pm"):
         win = cal[key]
-        a, b = two_feed(win)
+        a, b = two_feed(key, win)
         for t in tickers:
             if feed == "auto":
                 d = _choose_pre_market((a or {}).get(t), (b or {}).get(t), move, gap)
@@ -849,7 +831,9 @@ def prefetch_extended_hours(tickers: list, cfg: dict, hourly_by_ticker: dict | N
     on_bars = None
     if cfg.get("OVERNIGHT_ENABLED", True) and on_win[0] <= now:
         for f in [on_feed] + [x for x in cfg.get("OVERNIGHT_FEED_FALLBACKS", ()) if x != on_feed]:
-            on_bars = _alpaca_bars_window_multi(tickers, headers, f, *on_win, delay, tz)
+            on_bars = _ext_window_cached(f"on_{f}", tickers,
+                                         lambda ts, f=f: _alpaca_bars_window_multi(ts, headers, f, *on_win, delay, tz),
+                                         on_win, delay, now)
             if on_bars is not None:               # None = the request failed (e.g. 403): try the next feed
                 if f != on_feed:
                     print(f"  overnight: '{on_feed}' failed, using the fallback feed '{f}'")
