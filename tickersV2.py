@@ -161,6 +161,3 @@ my_filters = {
           #'Price': 'Under $50',
           #'RSI (14)': 'Not Overbought (<60)',
     }
-print(my_filters)
-lowTickers, midTickers, highTickers = fetch_tickers(my_filters)
-filteredTickers = lowTickers + midTickers + highTickers
