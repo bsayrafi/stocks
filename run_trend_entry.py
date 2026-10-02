@@ -38,12 +38,12 @@ debug_enrichment_tickers = [
 
 my_filters = {
           'Country': 'USA',
-          'Market Cap.': '+Mid (over $2bln)',
+          'Market Cap.': '+Small (over $300mln)',
           'Float Short': 'Under 20%',
           'Analyst Recom.': 'Hold or better',
           'Average Volume': 'Over 750K',
-          'P/E': 'Under 50',
-          'Forward P/E': 'Under 50',
+          #'P/E': 'Under 50',
+          #'Forward P/E': 'Under 50',
           'InstitutionalTransactions': 'Positive (>0%)',
     }
 
