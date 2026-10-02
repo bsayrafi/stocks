@@ -3829,13 +3829,17 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .summary-table tr.buy-row td:first-child {{ border-left: 4px solid var(--buy); }}
   .summary-table tr.watch-row td:first-child {{ border-left: 4px solid #f5b041; }}
   .summary-table td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
-  .summary-table th:nth-child(n+4):nth-child(-n+11) {{ text-align: right; }}
+  .summary-table th:nth-child(n+4):nth-child(-n+10) {{ text-align: right; }}
   .summary-table td.buywhen {{ line-height: 1.55; min-width: 360px; color: #cfd6e0; }}
   .gap {{ display: inline-block; min-width: 34px; text-align: center; padding: 2px 9px; border-radius: 999px; font-weight: 700; font-size: 12px; }}
   .gap.g0 {{ background: rgba(46,204,113,0.22); color: var(--pass); }}
   .gap.g1 {{ background: rgba(46,204,113,0.12); color: #7bdc9c; }}
   .gap.g2 {{ background: rgba(245,176,65,0.15); color: #f5b041; }}
   .gap.g3 {{ background: rgba(231,76,60,0.14); color: #ee8a80; }}
+  .ext {{ font-size: 11px; font-weight: 500; color: var(--muted); white-space: nowrap; margin-top: 2px; }}
+  .ext .pos {{ color: var(--pass); font-weight: 600; }}
+  .ext .neg {{ color: var(--fail); font-weight: 600; }}
+  .px-closed {{ color: var(--muted); }}
   .badge.watch {{ background: rgba(245,176,65,0.15); color: #f5b041; }}
 
   table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
@@ -4370,6 +4374,42 @@ def _skipped_card(skipped: list) -> str:
 
 
 
+_EXT_ABBR = {"after-hours": "AH", "overnight": "ON", "pre-market": "PRE"}
+
+
+def _ext_line(r: dict, up_cls: str = "pos", dn_cls: str = "neg", tag: str = "div") -> str:
+    """The most recent extended-hours price (AH / ON / PRE) as a small line to put under the regular price; '' when the
+    market is open or no extended-hours price is available."""
+    price, sess = r.get("current_ext_price"), r.get("current_ext_session")
+    if price is None or (isinstance(price, float) and price != price) or not sess:
+        return ""
+    pct = r.get("current_ext_pct")
+    pc = ""
+    if pct is not None and pct == pct:
+        pc = f' <span class="{up_cls if pct >= 0 else dn_cls}">{pct:+.2f}%</span>'
+    return f'<{tag} class="ext">{_EXT_ABBR.get(sess, "EXT")} {float(price):,.2f}{pc}</{tag}>'
+
+
+def _summary_price(r: dict) -> str:
+    """Price cell of the 'Setups at a glance' table: the regular price (grey once the market is closed, i.e. it is the
+    closing price), and under it the latest extended-hours price (AH / ON / PRE) without label or %, green when it is
+    at or above the regular-session close and red when below."""
+    def num(v):
+        return None if v is None or (isinstance(v, float) and v != v) else float(v)
+    px = num(r.get("current_price"))
+    closed = r.get("market_open") is False
+    out = "" if px is None else (f'<span class="px-closed">{px:.2f}</span>' if closed else f"{px:.2f}")
+    ext, ref = num(r.get("current_ext_price")), num(r.get("close_price"))
+    if ext is not None and r.get("current_ext_session"):
+        if ref is None:                                   # no close on record: fall back to the session's % vs close
+            pct = num(r.get("current_ext_pct"))
+            cls = "" if pct is None else ("pos" if pct >= 0 else "neg")
+        else:
+            cls = "pos" if ext >= ref else "neg"
+        out += f'<div class="ext"><span class="{cls}">{ext:,.2f}</span></div>'
+    return out
+
+
 _TIP_SESSIONS = {"after-hours": "After-hours", "overnight": "Overnight", "pre-market": "Pre-market"}
 
 
@@ -4458,16 +4498,16 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
         body += (f'<tr class="{"buy-row" if r["signal"] == "BUY" else "watch-row"}">'
                  f"<td>{tk_html}</td>"
                  f"<td><span class=\"badge {cls}\">{r['signal']}</span></td>"
-                 f"<td style=\"white-space:nowrap\">{html.escape(str(r.get('setup_label') or ''))}</td>"
-                 f'<td class="num">{f(r.get("current_price"))}</td><td class="num">{f(r.get("setup_rr"))}</td>'
+                 f"<td style=\"white-space:nowrap\">{html.escape(str(r.get('setup') or '').replace('_', ' ').capitalize())}</td>"
+                 f'<td class="num">{_summary_price(r)}</td><td class="num">{f(r.get("setup_rr"))}</td>'
                  f'<td class="num">{gap_html}</td>'
                  f'<td class="num">{f(r.get("setup_buy_up_to"))}</td>'
-                 f'<td class="num">{f(r.get("setup_buy_below"))}</td><td class="num">{f(r.get("setup_arm_level"))}</td>'
+                 f'<td class="num">{f(r.get("setup_buy_below"))}</td>'
                  f'<td class="num">{f(r.get("setup_stop"))}</td><td class="num">{f(r.get("setup_target"))}</td>'
                  f'<td class="buywhen">{waiting}</td></tr>')
     return (f'<section class="card"><h2>Setups at a glance ({len(picks)})</h2>'
             '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Ticker</th><th>Signal</th><th>Setup</th><th>Price</th><th>R:R</th><th>Gap</th><th>Buy up to</th>'
-            '<th>Buy at/below</th><th>+2R (arms trail)</th><th>Stop</th><th>Resistance (R:R)</th>'
+            '<th>Buy at/below</th><th>Stop</th><th>Resistance (R:R)</th>'
             '<th>What would make it a BUY</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div>'
             '<p class="note"><strong>Exit plan:</strong> initial stop, no profit target. Once price trades at the <strong>+2R</strong> level, '
@@ -4508,9 +4548,13 @@ border-left:6px solid var(--warn);border-radius:14px;padding:14px 14px 13px;marg
 -webkit-tap-highlight-color:rgba(156,220,254,.18)}
 a.row:active{background:var(--card2)}
 a.row.buy{border-left-color:var(--pass)}
-.r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.r1{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
+a.row .r1{flex-wrap:nowrap}
+.lhs{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;flex:1 1 auto}
+a.row .px{flex:none}
 .tk{font-weight:800;font-size:22px;color:var(--accent);letter-spacing:.2px}
-.px{margin-left:auto;font-weight:700;font-size:19px}
+.px{margin-left:auto;font-weight:700;font-size:19px;text-align:right}
+.px .ext{display:block;font-size:12.5px;font-weight:600;color:var(--muted);line-height:1.3;white-space:nowrap}
 .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:700;white-space:nowrap}
 .pill.buy{background:rgba(46,204,113,.18);color:var(--pass)}
 .pill.watch{background:rgba(245,176,65,.16);color:var(--warn)}
@@ -5008,10 +5052,10 @@ def mobile_summary(rows: list) -> str:
             r3 = f'<span class="need">Needs:</span> {html.escape(items[0])}{more}'
         out.append(
             f'<a class="row {kind}" href="#m-{html.escape(str(r["ticker"]))}">'
-            f'<div class="r1"><span class="tk">{html.escape(str(r["ticker"]))}</span>'
+            f'<div class="r1"><span class="lhs"><span class="tk">{html.escape(str(r["ticker"]))}</span>'
             f'<span class="pill {kind}">{r["signal"]}</span>'
             + (f'<span class="pill {gcls}">gap {g:.1f}</span>' if kind == "watch" and g != 99.0 else "")
-            + f'<span class="px">{_m_num(r.get("current_price"))}</span></div>'
+            + f'</span><span class="px">{_m_num(r.get("current_price"))}{_ext_line(r, "up", "dn", "span")}</span></div>'
             f'<div class="r2">{html.escape(str(r.get("setup_label") or ""))} &middot; R:R {_m_num(r.get("setup_rr"))} '
             f'&middot; stop {_m_num(r.get("setup_stop"))}</div>'
             + (f'<div class="r3">{r3}</div>' if r3 else "") + "</a>")
