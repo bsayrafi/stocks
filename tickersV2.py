@@ -18,7 +18,7 @@ from benchmarks import build_benchmark_map
 CACHE_DIR = (
     os.environ.get("FINVIZ_CACHE_DIR")
     or CONFIG.get("FINVIZ_CACHE_DIR")
-    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "finviz_cache")
 )
 
 
