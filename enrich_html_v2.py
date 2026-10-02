@@ -4566,7 +4566,7 @@ def _turning_up_card(rows: list) -> str:
         v = num(v)
         return "" if v is None else fmt.format(v)
 
-    picks.sort(key=lambda r: -(num(r.get("ctx_ext_ema50_atr")) or -99))        # closest to the EMA50 first
+    picks.sort(key=lambda r: -(num(r.get("day_chg_pct")) if num(r.get("day_chg_pct")) is not None else -999))   # biggest gain today first
     body = ""
     for r in picks:
         tk = html.escape(str(r["ticker"]))
