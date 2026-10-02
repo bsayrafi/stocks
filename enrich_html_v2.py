@@ -1535,6 +1535,8 @@ SETUP_DEFAULTS = {
     "NTFY_LITE": True,                 # also write <name>_up_lite.html: a phone-friendly list + cards for the BUY / WATCH tickers only
     "NTFY_LITE_ABOVE_MB": 0.0,         # send the phone version whenever the full report is larger than this (0 = always)
     "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
+    "TURN_WATCH": True,                # flag tickers with no setup that close at most TURN_WATCH_MAX_ATR under the EMA50 with the
+    "TURN_WATCH_MAX_ATR": 1.5,         # daily AND 1h turn passing: never filtered out, sent to _up, listed (watch only, NOT traded, untested)
     "TRAIL_ARM_R": 2.0,            # the trailing stop arms once price has gained this many R
     "TRAIL_MA": "EMA20",           # ... and then trails under this daily moving average (raise only)
     "EXIT_MAX_HOLD_DAYS": 90,      # time stop for the trailing exit
@@ -2350,9 +2352,20 @@ def evaluate_setups(daily: pd.DataFrame, daily_atr: float, results: dict, stoch_
         grade = ("A" if best["n_confirms"] >= 4 and best["rr"] >= 2 else "B") if best["buy"] else (
             "C" if verdict == "WATCH" else "D")
 
+    # "Turning up near the EMA50" (watch only, never a BUY, not backtested): no traded setup, the close is at or below
+    # the EMA50 by at most TURN_WATCH_MAX_ATR, and both turn checks pass (the same daily + 1h turn a BUY needs).
+    ext50 = ctx["ext_ema50_atr"]
+    turning_up = bool(best is None and cfg.get("TURN_WATCH", True) and ext50 is not None
+                      and -cfg.get("TURN_WATCH_MAX_ATR", 1.5) <= ext50 <= 0 and daily_turn and h1_turn)
+    if turning_up:
+        wait_reason += (f"; TURNING UP near the EMA50 ({abs(ext50):.2f} ATR below it, daily and 1h turn both pass) - "
+                        "watch for an EMA50 reclaim; not a traded setup")
+
     public_ctx = {kk: vv for kk, vv in ctx.items() if not kk.startswith("_")}
     return {
         "signal": verdict, "grade": grade,
+        "turning_up": turning_up,
+        "day_chg_pct": round((c / prev_c - 1) * 100, 2) if prev_c else None,
         "setup": best["type"] if best else None,
         "setup_label": SETUP_LABELS[best["type"]] if best else None,
         "context": public_ctx, "vol": vol,
@@ -2710,6 +2723,9 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     # WAIT) goes to the _up report; the channel is only used for tickers with no setup.
     if cfg.get("GROUP_BY_SETUP", True) and signal["setup"] is not None and trend_dir != "up":
         trend_reason = f"{signal['setup_label']} ({signal['signal']}) overrides the 1h channel ({trend_reason})"
+        trend_dir = "up"
+    elif signal.get("turning_up") and trend_dir != "up":      # watch-only: shown with the setups, not hidden in _down
+        trend_reason = f"turning up near the EMA50 overrides the 1h channel ({trend_reason})"
         trend_dir = "up"
     fundamentals = fetch_fundamentals(tk, info=info)
     analyst = daily_cached(
@@ -3831,6 +3847,7 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .summary-table tr.buy-row td:first-child {{ border-left: 4px solid var(--buy); }}
   .summary-table tr.watch-row td:first-child {{ border-left: 4px solid #f5b041; }}
   .summary-table tr.wait-row td:first-child {{ border-left: 4px solid #556070; }}
+  .summary-table tr.turn-row td:first-child {{ border-left: 4px solid #4dd0e1; }}
   .summary-table tr.wait-row td, .summary-table tr.wait-row a.tk, .summary-table tr.wait-row .px-closed {{ color: #6b7585; }}
   .summary-table td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
   .summary-table th:nth-child(n+4):nth-child(-n+10) {{ text-align: right; }}
@@ -4199,6 +4216,7 @@ def report_to_row(report: dict, report_group: str) -> dict:
     ctx = sig["context"]
     row.update({
         "setup": sig["setup"], "setup_label": sig["setup_label"], "grade": sig["grade"],
+        "turning_up": sig.get("turning_up"), "day_chg_pct": sig.get("day_chg_pct"), "ctx_ema50": ctx.get("ema50"),
         "ctx_state": ctx["state"], "ctx_ext_ema50_atr": ctx["ext_ema50_atr"],
         "ctx_ema50_slope_pct": ctx["ema50_slope_pct"], "ctx_higher_lows": ctx["higher_lows"],
         "ctx_higher_highs": ctx["higher_highs"], "ctx_days_above_ema50": ctx["days_above_ema50"],
@@ -4363,7 +4381,7 @@ def report_filter_checks(report: dict) -> dict:
     signal = report["signal"]
     eps_improving = (report.get("analyst") or {}).get("eps_improving")
     return {
-        "no_setup": signal["setup"] is None,
+        "no_setup": signal["setup"] is None and not signal.get("turning_up"),      # turning up near the EMA50 counts as a setup here
         "weak_context": signal["context"]["state"] in ("DOWNTREND", "RANGE"),
         "wait_signal": signal["signal"] == "WAIT",
         "eps_deteriorating": eps_improving is False,                     # N/A does not count as failing
@@ -4451,7 +4469,7 @@ def _ticker_tip(r: dict) -> str:
 
 
 _TIP_SCRIPT = (
-    "<script>(function(){var tip=document.getElementById('tk-tip');"
+    "<script>(function(){if(window.__tkTip)return;window.__tkTip=1;var tip=document.getElementById('tk-tip');"
     "if(!tip){tip=document.createElement('div');tip.id='tk-tip';document.body.appendChild(tip);}"
     "function place(e){var x=e.clientX+16,y=e.clientY+16,w=tip.offsetWidth,h=tip.offsetHeight;"
     "if(x+w>window.innerWidth-8)x=e.clientX-w-16;if(y+h>window.innerHeight-8)y=e.clientY-h-16;"
@@ -4532,6 +4550,42 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
             'a price/R:R problem 2-5 depending on how far the entry zone is, an extended stock 2, a failed structural '
             'requirement 3. Conditions are listed in order and must all hold. Turn levels (prior close, session VWAP) '
             'move during the day. Hover a ticker for company, sector, industry, price and the previous day.</p>'
+            + _TIP_SCRIPT + '</section>')
+
+
+def _turning_up_card(rows: list) -> str:
+    """Watch list under the setups table: tickers with no setup that are turning up just under the EMA50."""
+    picks = [r for r in rows if r.get("turning_up") and r.get("report") == "up"]
+    if not picks:
+        return ""
+
+    def num(v):
+        return None if v is None or (isinstance(v, float) and v != v) else float(v)
+
+    def f(v, fmt="{:.2f}"):
+        v = num(v)
+        return "" if v is None else fmt.format(v)
+
+    picks.sort(key=lambda r: -(num(r.get("ctx_ext_ema50_atr")) or -99))        # closest to the EMA50 first
+    body = ""
+    for r in picks:
+        tk = html.escape(str(r["ticker"]))
+        tip = html.escape(_ticker_tip(r), quote=True)
+        chg = num(r.get("day_chg_pct"))
+        chg_html = "" if chg is None else f'<span class="{"pos" if chg >= 0 else "neg"}">{chg:+.2f}%</span>'
+        body += (f'<tr class="turn-row"><td><a class="tk" href="#{_card_id(r["ticker"])}" data-tip="{tip}">{tk}</a></td>'
+                 f'<td class="num">{_summary_price(r)}</td><td class="num">{chg_html}</td>'
+                 f'<td class="num">{f(r.get("ctx_ema50"))}</td><td class="num">{f(r.get("ctx_ext_ema50_atr"))}</td>'
+                 f'<td class="num">{f(r.get("ctx_ema50_slope_pct"), "{:+.2f}%")}</td>'
+                 f'<td>{html.escape(str(r.get("ctx_state") or ""))}</td></tr>')
+    return (f'<section class="card"><h2>Turning up near the EMA50 ({len(picks)})</h2>'
+            '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Ticker</th><th>Price</th><th>Today</th>'
+            '<th>EMA50</th><th>From EMA50 (ATR)</th><th>EMA50 slope (5d)</th><th>Trend</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div>'
+            '<p class="note"><strong>Watch only - not a traded setup and not backtested.</strong> No setup yet, the close is at most '
+            '1.5 ATR under the daily EMA50, and both turn checks pass (daily: green candle closing in the upper half; '
+            '1h: above session VWAP with MACD bullish or %K above %D). A Pullback only becomes possible after the stock '
+            'reclaims the EMA50 and rebuilds an uptrend. During the session the turn checks can still change.</p>'
             + _TIP_SCRIPT + '</section>')
 
 
@@ -5164,7 +5218,8 @@ def main(tickers, fileapp):
         body = "\n".join(sections[direction]) or (
             f'<section class="card"><p class="note">No tickers in the {direction} report.</p></section>')
         if direction == "up":
-            body = _setup_summary_card(csv_rows, f"{fileapp}_signal_report_{timestamp}_down.html") + body
+            body = (_setup_summary_card(csv_rows, f"{fileapp}_signal_report_{timestamp}_down.html")
+                    + _turning_up_card(csv_rows) + body)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
         print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
