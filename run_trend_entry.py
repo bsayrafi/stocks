@@ -30,55 +30,65 @@ from trend_confirm import score_trends
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 
+# $0.04 – $40.65
 small_enrichment_tickers = [
-   "AMN", "ARHS", "ARLO", "ASTH", "ATEN", "CARS", "DSP", "ETON", "EGHT",
-    "GCT", "GDYN", "GNK", "GOLD", "GPRE", "HCSG", "HIVE", "HOPE", 
-    "HPE", "INVX", "IONQ", "IRWD", "KRP", "MG", "MGY", "MITK", "MDXG",
-    "MLKN", "MNTN", "NOK", "NX", "NXDR", "OMER", "OPRT", "OMDA", "PANL", 
-    "PAYS", "PCRX", "PGNY", "PGY", "PRGS", "PRTH", "QBTS", "QNST", "QTWO", 
-    "QUBT", "REPX", "RIGL", "SWBI", "SWIM", "THRM", "VFF", "WWW", 
-    "XPRO", "ZVRA"
+    "ADEA", "AGEN", "AGIO", "AMPL", "AMRX", "ANGX", "APPS", "ARHS", "ARLO", "ARQT",
+    "ASTH", "ATEN", "AVAH", "AVNT", "AVPT", "AXTA", "BHVN", "BOX", "BRZE", "BULL",
+    "CCC", "CDE", "CHYM", "CLYM", "CNK", "CRBG", "CRGY", "CRVW", "CTVA", "CXW",
+    "DC", "DSP", "EGHT", "ESI", "ET", "EWTX", "EXLS", "EXTR", "FA", "FATE",
+    "FIGS", "FIVN", "FLYW", "FRSH", "FSLY", "FTRE", "GEO", "GPRE", "GTES", "GTX",
+    "HIVE", "HOPE", "HP", "HTGC", "HYLN", "IMMX", "INGM", "IOT", "IREN", "IRWD",
+    "KDP", "KOS", "KURA", "MG", "MGNI", "MGY", "MITK", "MLKN", "MNTN", "MQ",
+    "MRVI", "MTCH", "NAVN", "NESR", "NIQ", "NNBR", "NOK", "NWS", "NWSA", "NXDR",
+    "OMDA", "OMER", "OVID", "PAA", "PAGP", "PANL", "PAY", "PAYS", "PCRX", "PD",
+    "PFE", "PR", "PRTH", "PTEN", "QBTS", "QNST", "QUBT", "RCUS", "REI", "RELY",
+    "SHC", "SM", "SOFI", "SSRM", "SXC", "TALO", "TENB", "TOST", "TTEK", "VG",
+    "VIR", "VSH", "VSTS", "VTRS", "WAY", "WNC", "WT", "WTI", "WTTR", "ZETA",
 ]
 
+# $40.95 – $147.77
+medium_enrichment_tickers = [
+    "AAOI", "ACMR", "AER", "AIR", "ANF", "APA", "APH", "ARMK", "ATRC", "ATRO",
+    "AU", "AVT", "AXTI", "BBY", "BILL", "BMRN", "BMY", "BTSG", "BWA", "CART",
+    "CDNA", "CDW", "CF", "CGNX", "CGON", "CHRD", "COP", "CORT", "CSCO", "CVLT",
+    "DAR", "DINO", "DIS", "DK", "DOCN", "DOCU", "DT", "DUOL", "DVN", "DXCM",
+    "EL", "ELF", "EOG", "ESTC", "ETON", "ETSY", "EW", "EXEL", "FAST", "FCX",
+    "FLEX", "FLR", "FLS", "FTI", "GDDY", "GILD", "GPN", "GTLB", "HALO", "HPE",
+    "HQY", "HSIC", "IFF", "INCY", "INOD", "INSW", "INTC", "IONQ", "KNX", "KO",
+    "KOD", "LNTH", "LSCC", "MCHP", "MNST", "MPLX", "MRK", "MTDR", "MXL", "NEM",
+    "NOW", "NTNX", "OKE", "ORCL", "OVV", "OXY", "P", "PARR", "PCTY", "PDFS",
+    "PENG", "PG", "PPLI", "PTC", "Q", "QTWO", "RIGL", "RKLB", "RPRX", "SCHW",
+    "SLB", "SMCI", "SSNC", "ST", "TKR", "TTC", "TTMI", "TVTX", "U", "UBER",
+    "UCTT", "URBN", "USFD", "VCYT", "VIAV", "VST", "WES", "WK", "XYZ", "ZM",
+]
+
+# $148.07 – $1787.69
 large_enrichment_tickers = [
-
-   "A", "AAOI", "AAPL", "ABBV", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB",
-    "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI",
-    "ATRC", "ATRO", "AU", "AVAH", "AVGO", "AVNT", "AVPT", "AXTA", "BDX", "BE",
-    "BIIB", "BMRN", "BMY", "BTSG", "BULL", "BWA", "CAH", "CART", "CAT", "CDE",
-    "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "CNK", "COHR", "COP", "CORT",
-    "CRBG", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX",
-    "CXW", "DAR", "DASH", "DDOG", "DE", "DELL", "DGX", "DHR", "DIS", "DK",
-    "DOCN", "DT", "DVN", "DXCM", "ECL", "EL", "ELF", "ELV", "EMR", "ENTG",
-    "EOG", "ESI", "ESTC", "ET", "ETSY", "EW", "EXEL", "EXLS", "EXPE", "FCX",
-    "FIGS", "FIVE", "FIVN", "FLEX", "FLS", "FLYW", "FORM", "FRSH", "FTI", "GDDY",
-    "GEV", "GLW", "GNRC", "GOOG", "GOOGL", "GPN", "GTES", "GTX", "HALO", "HPE",
-    "HQY", "HSIC", "HTGC", "HUM", "IFF", "INCY", "INGM", "INOD", "INSW", "INTC",
-    "IOT", "IQV", "IREN", "ITT", "JBL", "KDP", "KEYS", "KLAC", "KO", "LECO",
-    "LITE", "LLY", "LNG", "LRCX", "MANH", "MCHP", "MDB", "META", "MGNI", "MMM",
-    "MNST", "MPC", "MPLX", "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS",
-    "NEM", "NESR", "NOW", "NTAP", "NTNX", "NVDA", "NWS", "NWSA", "OKE", "OKTA",
-    "ONTO", "ORCL", "OVV", "OXY", "P", "PAA", "PAGP", "PANW", "PARR", "PAY",
-    "PCTY", "PDFS", "PG", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN",
-    "RELY", "RGEN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM",
-    "SKHY", "SLB", "SM", "SMTC", "SN", "SNDK", "SNX", "SOFI", "SPCX", "SSRM",
-    "ST", "STT", "TER", "TKR", "TMO", "TOST", "TRGP", "TSLA", "TSM", "TTC",
-    "TTEK", "TWLO", "TXN", "UBER", "UNH", "USFD", "VCYT", "VEEV", "VG", "VLO",
-    "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "WT", "WTTR", "XOM",
-    "XYZ", "ZBRA", "ZM"
-
+    "A", "AAPL", "ABBV", "ABNB", "ADI", "ADP", "ALAB", "AMAT", "AMD", "AME",
+    "AMGN", "AMZN", "ANET", "ATI", "AVGO", "BDX", "BE", "BIIB", "CAH", "CAT",
+    "CDNS", "CIEN", "COHR", "CRDO", "CRM", "CRWD", "CTAS", "CVX", "DASH", "DDOG",
+    "DE", "DELL", "DGX", "DHR", "ECL", "ELV", "EMR", "ENTG", "EXPE", "FIVE",
+    "FORM", "FTNT", "GEV", "GH", "GLW", "GNRC", "GOOG", "GOOGL", "GWRE", "HUM",
+    "ILMN", "IQV", "ITT", "JBL", "JNJ", "KEYS", "KLAC", "LECO", "LITE", "LLY",
+    "LNG", "LRCX", "MANH", "MDB", "META", "MMM", "MPC", "MRVL", "MSFT", "MTSI",
+    "MU", "NBIS", "NTAP", "NTRA", "NVDA", "OKTA", "ONTO", "PANW", "PH", "PLTR",
+    "PSX", "QCOM", "REGN", "RGEN", "RGLD", "ROK", "ROKU", "ROST", "RVMD", "RVTY",
+    "SANM", "SITM", "SKHY", "SMTC", "SN", "SNDK", "SNPS", "SNX", "SPCX", "STT",
+    "STX", "TEAM", "TER", "TMO", "TRGP", "TSLA", "TSM", "TWLO", "TXN", "UNH",
+    "UTHR", "VEEV", "VLO", "WAT", "WDAY", "WDC", "WSM", "XOM", "ZBRA", "ZS",
 ]
-
 
 debug_enrichment_tickers = [
 
   "META", "AAPL", "AMZN", "GOOG", "MSFT", "TSLA", "NVDA", "QCOM", "ARLO", "PSX"
     ]
 
-def run_enrichment(num, runtype="all"):
+def run_enrichment(num ):
     enrichment_tickers = []
     if num==0:
         enrichment_tickers = small_enrichment_tickers
+    elif num==1:
+        enrichment_tickers = medium_enrichment_tickers
     elif num==2:
         enrichment_tickers = large_enrichment_tickers
     elif num==3:
@@ -106,12 +116,12 @@ def run_enrichment(num, runtype="all"):
 
 
 num = 0 #small
-runtype = "all"
 #num=4;
 
 if num==4:
-   run_enrichment(3, runtype)
+   run_enrichment(3)
 else:
-    run_enrichment(0, runtype)
-    run_enrichment(2, runtype)
-    run_enrichment(3, runtype)
+    run_enrichment(0)
+    run_enrichment(1)
+    run_enrichment(2)
+    #run_enrichment(3)

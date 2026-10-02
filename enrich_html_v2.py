@@ -1292,6 +1292,27 @@ def _fmt_billions(v) -> str:
     return f"{sign}${abs(v) / 1e9:,.2f}B"
 
 
+def dividend_yield_fraction(info: dict):
+    # Dividend yield as a FRACTION (0.0102 = 1.02%), whatever unit yfinance uses for 'dividendYield'. yfinance moved that
+    # field from a fraction to a percent, so the old "x 100" showed 102% for a 1.02% yield. Prefer values whose unit never
+    # changed: annual dividend rate / price, then trailingAnnualDividendYield (always a fraction); only when neither exists
+    # read dividendYield as a percent (the current yfinance convention). None when nothing is available.
+    def num(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+    rate = num(info.get("dividendRate") or info.get("trailingAnnualDividendRate"))
+    px = num(info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"))
+    if rate and px and px > 0:
+        return rate / px
+    t = num(info.get("trailingAnnualDividendYield"))
+    if t is not None:
+        return t
+    v = num(info.get("dividendYield"))
+    return None if v is None else v / 100.0
+
+
 FUNDAMENTAL_FIELDS = [
     # (label,                      info_key,                       formatter)
     ("Name",                       "longName",                     lambda v: str(v)),
@@ -1344,7 +1365,7 @@ def fetch_fundamentals(ticker: str, info: dict | None = None) -> dict:
 
     fundamentals = {}
     for label, key, fmt in FUNDAMENTAL_FIELDS:
-        raw = info.get(key)
+        raw = dividend_yield_fraction(info) if key == "dividendYield" else info.get(key)
         if raw is None:
             fundamentals[label] = "N/A"
             continue
@@ -1507,6 +1528,7 @@ SETUP_DEFAULTS = {
     "OVERNIGHT_FEED_FALLBACKS": (),    # e.g. ("overnight",): feeds tried in order if OVERNIGHT_FEED is refused (403); see alpaca_check.py
     "NTFY_COMPRESS": "auto",           # "auto": zip attachments above NTFY_COMPRESS_ABOVE_MB; True: always; False: never
     "NTFY_COMPRESS_ABOVE_MB": 1.5,
+    "MOBILE_CHART_DAYS": 40,           # daily candles on the phone report's chart
     "NTFY_LINK": True,                 # upload to a storage topic and send the alert with the file's URL in Click + a button (opens in the phone's browser)
     "NTFY_STORAGE_TOPIC": None,        # default "<NTFY_TOPIC>-files"; nobody should subscribe to it
     "NTFY_PDF": "auto",                # send a PDF instead of the .html: "auto" = if Playwright is installed, True = warn if it is not, False = never
@@ -2613,6 +2635,12 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     avwap = anchored_vwap(tf_data["1h"], chart["daily"]["ohlcv"], cfg.get("AVWAP_ANCHOR", "low"),
                           cfg.get("MARKET_TZ", "America/New_York"))
     chart["daily"]["avwap"] = avwap
+    _nm = cfg.get("MOBILE_CHART_DAYS", 40)
+    _d1 = tf_data["1D"]
+    chart["daily_m"] = {"ohlcv": _d1.iloc[-_nm:],
+                        "ema20": _d1["Close"].ewm(span=20, adjust=False).mean().iloc[-_nm:],
+                        "ema50": _d1["Close"].ewm(span=50, adjust=False).mean().iloc[-_nm:],
+                        "today_in_progress": hhhl["today_in_progress"]}
     # levels are searched over SR_DAYS (independent of how many days the chart shows)
     day_sr = swing_sr_levels(tf_data["1D"].iloc[-cfg.get("SR_DAYS", 60):], current_price, daily_atr_val, stop,
                              pivot=cfg.get("SR_PIVOT", 2), merge_atr=cfg.get("SR_MERGE_ATR", 0.5),
@@ -2763,7 +2791,8 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
         "pre_market_info": pre_market_info,
         "news": news,
         # raw (unformatted) yfinance values behind the Fundamentals table, for the CSV
-        "fund_raw": {key: info.get(key) for _, key, _ in FUNDAMENTAL_FIELDS} if info else {},
+        "fund_raw": ({key: (dividend_yield_fraction(info) if key == "dividendYield" else info.get(key))
+                      for _, key, _ in FUNDAMENTAL_FIELDS} if info else {}),
         "prev_day": prev_session(tf_data["1D"], hhhl["today_in_progress"]),
     }
 
@@ -3542,8 +3571,9 @@ def render_ticker_html(report: dict) -> str:
             ("Price in channel", pos_txt),
         ]
     other_items += [
-        ("Structural stop (1h support - 0.5x daily ATR)", f"{report['stop']}"),
-        (f"<strong>Take-Profit Target ({html.escape(((report.get('day_sr') or {}).get('target') or {}).get('source', '1.5x risk'))})</strong>",
+        (("Initial stop (from the setup)" if signal.get("setup") else "Structural stop (1h support - 0.5x daily ATR)"), f"{report['stop']}"),
+        (("<strong>Nearest real resistance (R:R filter; no profit target)</strong>" if signal.get("setup") else
+          f"<strong>Take-Profit Target ({html.escape(((report.get('day_sr') or {}).get('target') or {}).get('source', '1.5x risk'))})</strong>"),
          f"<strong>{report['take_profit']}</strong>" + _target_r_html(report)),
     ]
     other_levels_block = "\n      <h3>Other levels</h3>" + _four_col_table(other_items)
@@ -3617,7 +3647,7 @@ def render_ticker_html(report: dict) -> str:
         if days_to_earnings is not None:
             earnings_str = f"{earnings_date} ({days_to_earnings:+d}d)"
         earnings_window_html = _badge(
-            catalysts.get("in_earnings_window", False), "IN WINDOW", "CLEAR"
+            not catalysts.get("in_earnings_window", False), "CLEAR", "IN WINDOW"
         )
 
         sp500_member = catalysts.get("in_sp500")
@@ -4453,6 +4483,7 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
             + _TIP_SCRIPT + '</section>')
 
 
+import re
 
 # ---------------------------------------------------------------- mobile "lite" report
 # A phone-first version of the BUY / WATCH report: one column, big tap targets, no wide tables, no hover tooltips.
@@ -4501,6 +4532,9 @@ h3{font-size:12.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--acc
 .kv:last-child{border-bottom:0}
 .kv span:first-child{color:var(--muted)}
 .kv span:last-child{text-align:right;font-weight:600}
+.kv.stack{flex-direction:column;gap:4px}
+.kv.stack span:last-child{text-align:left;font-weight:400;color:#d9dde3}
+.kv.stack small{display:block}
 .kv small{display:block;color:var(--muted);font-weight:400;font-size:12.5px}
 .need-list{margin:4px 0 0;padding-left:22px}
 .need-list li{margin:7px 0;font-size:16px}
@@ -4508,13 +4542,32 @@ h3{font-size:12.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--acc
 details{background:var(--card2);border:1px solid var(--border);border-radius:12px;margin:10px 0;padding:0 14px}
 summary{cursor:pointer;min-height:52px;padding:14px 0;font-size:15.5px;color:var(--text);list-style:none;display:flex;
 align-items:center;justify-content:space-between;gap:8px;touch-action:manipulation}
-summary span:nth-child(2){margin-left:auto;color:var(--muted)}
+summary span:first-child{flex:none;white-space:nowrap}
+summary span:nth-child(2){flex:1 1 auto;min-width:0;margin-left:auto;text-align:right;color:var(--muted);font-size:14.5px}
 summary::-webkit-details-marker{display:none}
 summary::after{content:"+";color:var(--muted);font-weight:700;font-size:18px}
 details[open] summary::after{content:"-"}
 .chk{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--border);font-size:15px}
 .chk i{font-style:normal;font-weight:800;width:18px;flex:none}
 .chk.ok i{color:var(--pass)}.chk.no i{color:var(--fail)}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12.5px;font-weight:700;background:#222a35;color:var(--muted);white-space:nowrap}
+.badge.pass{background:rgba(46,204,113,.16);color:var(--pass)}
+.badge.fail{background:rgba(239,91,77,.16);color:var(--fail)}
+.muted-small{color:var(--muted);font-size:12.5px;font-weight:400}
+.kv span:last-child .muted-small{display:inline-block;margin-top:2px}
+.tfb{padding:10px 0;border-top:1px solid var(--border)}
+.tfh{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:16px}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:4px 0 10px}
+.fcell{background:var(--card);padding:9px 10px;min-width:0}
+.fcell small{display:block;color:var(--muted);font-size:12px}
+.fcell b{font-size:15.5px;font-weight:600}
+.news{list-style:none;margin:4px 0 6px;padding:0}
+.news li{padding:10px 0;border-top:1px solid var(--border);font-size:15px;line-height:1.4}
+.recbar{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:10px 0 6px}
+.recbar span{display:block;height:100%}
+details.chartbox{padding:0 10px 8px;margin:12px 0}
+details.chartbox summary{padding-left:2px;padding-right:2px}
+details.chartbox .note{margin:6px 2px 2px;line-height:1.9}
 .top{display:inline-block;margin-top:10px;padding:10px 0;font-size:14px;color:var(--muted);text-decoration:none}
 .fab{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));z-index:5;display:none;width:48px;height:48px;align-items:center;justify-content:center;border-radius:50%;background:rgba(26,31,40,.94);border:1px solid var(--border);color:var(--text);font-size:22px;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(0,0,0,.7);touch-action:manipulation}
 @media (orientation:landscape) and (min-width:760px){
@@ -4575,6 +4628,282 @@ def _m_checks(items) -> str:
                    for lbl, ok in items)
 
 
+
+def _m_chart_svg(df, lines, levels, in_progress=False, date_mode="day", label="chart", W=360, price_h=215, vol_h=36):
+    """Phone-sized candlestick chart. One SVG user unit = one CSS pixel at ~360 px width, so 10.5-unit text is readable.
+    lines  : [(name, series, colour)]   moving averages / VWAP, drawn over the candles
+    levels : [(label, price, colour, dash)]   horizontal levels with their label in the right gutter (only if near the candles)"""
+    n = len(df)
+    if n < 5:
+        return ""
+    pad_l, pad_r, pad_t, gap, axis_h = 4, 84, 8, 6, 18
+    H = pad_t + price_h + gap + vol_h + axis_h
+    plot_w = W - pad_l - pad_r
+    step = plot_w / n
+    body = max(2.0, min(8.0, step * 0.62))
+    o, h, l, c = (df[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close"))
+    lo, hi = float(np.nanmin(l)), float(np.nanmax(h))
+    rng = (hi - lo) or 1.0
+    keep = [(lb, float(v), col, dash) for lb, v, col, dash in levels
+            if v is not None and not pd.isna(v) and lo - 0.6 * rng <= float(v) <= hi + 0.6 * rng]
+    vals = [lo, hi] + [v for _, v, _, _ in keep]
+    vmin, vmax = min(vals), max(vals)
+    padv = (vmax - vmin) * 0.05 or 0.5
+    vmin, vmax = vmin - padv, vmax + padv
+
+    def y(v):
+        return pad_t + (vmax - v) / (vmax - vmin) * price_h
+
+    def x(i):
+        return pad_l + step * (i + 0.5)
+
+    idx = df.index
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert("America/New_York")
+    dates = np.asarray(idx.date)
+    t = ['<text font-family="system-ui,Roboto,sans-serif" font-size="10" fill="#98a2b0">']  # placeholder (kept simple)
+    parts = [f'<rect x="0" y="0" width="{W}" height="{H}" fill="#000" rx="8"/>']
+    for k in range(1, 4):                                     # faint gridlines with a tiny price at the left
+        gy = pad_t + price_h * k / 4
+        gv = vmax - (vmax - vmin) * k / 4
+        parts.append(f'<line x1="{pad_l}" x2="{pad_l + plot_w}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#1a2029" stroke-width="1"/>')
+        parts.append(f'<text x="{pad_l + 2}" y="{gy - 2:.1f}" font-size="9.5" fill="#566070">{gv:,.2f}</text>')
+    vmaxv = float(np.nanmax(df["Volume"].to_numpy(dtype=float))) or 1.0
+    vol0 = pad_t + price_h + gap
+    for i in range(n):
+        up = c[i] >= o[i]
+        col = "#2ecc71" if up else "#ef5b4d"
+        op = ' opacity=".55"' if (in_progress and i == n - 1) else ""
+        yt, yb = y(max(o[i], c[i])), y(min(o[i], c[i]))
+        parts.append(f'<line x1="{x(i):.1f}" x2="{x(i):.1f}" y1="{y(h[i]):.1f}" y2="{y(l[i]):.1f}" stroke="{col}" stroke-width="1"{op}/>')
+        parts.append(f'<rect x="{x(i) - body / 2:.1f}" y="{yt:.1f}" width="{body:.1f}" height="{max(1.0, yb - yt):.1f}" fill="{col}"{op}/>')
+        vh = float(df["Volume"].iloc[i]) / vmaxv * vol_h
+        parts.append(f'<rect x="{x(i) - body / 2:.1f}" y="{vol0 + vol_h - vh:.1f}" width="{body:.1f}" height="{max(0.5, vh):.1f}" fill="{col}" opacity=".45"/>')
+    for name, series, col in lines:                          # MAs / VWAP (broken at day boundaries for session VWAP)
+        try:
+            ser = series.reindex(df.index).to_numpy(dtype=float)
+        except Exception:
+            continue
+        seg = []
+        for i in range(n):
+            new_day = date_mode == "hour" and name == "VWAP" and i > 0 and dates[i] != dates[i - 1]
+            if np.isnan(ser[i]) or new_day:
+                if len(seg) > 1:
+                    parts.append(f'<polyline points="{" ".join(seg)}" fill="none" stroke="{col}" stroke-width="1.6"/>')
+                seg = []
+            if not np.isnan(ser[i]):
+                seg.append(f"{x(i):.1f},{y(ser[i]):.1f}")
+        if len(seg) > 1:
+            parts.append(f'<polyline points="{" ".join(seg)}" fill="none" stroke="{col}" stroke-width="1.6"/>')
+    ys = sorted(((y(v), lb, v, col, dash) for lb, v, col, dash in keep), key=lambda r: r[0])
+    last_label_y = -99.0
+    for yy, lb, v, col, dash in ys:
+        parts.append(f'<line x1="{pad_l}" x2="{pad_l + plot_w}" y1="{yy:.1f}" y2="{yy:.1f}" stroke="{col}" stroke-width="1.2" stroke-dasharray="{dash}"/>')
+        ly = max(yy + 3.5, last_label_y + 12)
+        last_label_y = ly
+        parts.append(f'<text x="{pad_l + plot_w + 4}" y="{ly:.1f}" font-size="10" font-weight="600" fill="{col}">{html.escape(lb)} {v:,.2f}</text>')
+    last_x_label = -99.0                                     # x-axis labels
+    for i in range(n):
+        show = ((date_mode == "day" and (n - 1 - i) % 10 == 0) or (date_mode == "hour" and (i == 0 or dates[i] != dates[i - 1])))
+        if show and x(i) - last_x_label >= 38 and 18 <= x(i) <= pad_l + plot_w - 8:
+            d = dates[i]
+            parts.append(f'<text x="{x(i):.1f}" y="{H - 4}" font-size="9.5" fill="#6b7686" text-anchor="middle">{d.month:02d}/{d.day:02d}</text>')
+            last_x_label = x(i)
+    return (f'<svg viewBox="0 0 {W} {H}" width="100%" style="display:block;width:100%;height:auto" role="img" '
+            f'aria-label="{html.escape(label)}">{"".join(parts)}</svg>')
+
+
+def _m_swatch(col, text, dash=False):
+    return (f'<span style="white-space:nowrap;margin-right:10px"><span style="display:inline-block;width:14px;height:0;'
+            f'border-top:2px {"dashed" if dash else "solid"} {col};vertical-align:middle;margin-right:4px"></span>{html.escape(text)}</span>')
+
+
+def _m_charts(report: dict, sig: dict, px: float) -> str:
+    """Daily chart (open) and 1h chart (collapsed) for a card, or '' when the chart data is missing."""
+    chart = report.get("chart") or {}
+    out = []
+    dm = chart.get("daily_m")
+    if dm is not None and not dm["ohlcv"].empty:
+        lv = [("Stop", sig.get("stop"), "#ef5b4d", "5 4"), ("+2R", sig.get("arm_level"), "#2ecc71", "2 4"),
+              ("Res", sig.get("target"), "#c9d1d9", "6 4"), ("Max", sig.get("buy_up_to"), "#4dd0e1", "3 3"),
+              ("Buy<=", sig.get("buy_below"), "#4dd0e1", "3 3"), ("Now", px, "#ffd166", "1 3")]
+        svg = _m_chart_svg(dm["ohlcv"], [("EMA20", dm["ema20"], "#f5b041"), ("EMA50", dm["ema50"], "#b388ff")], lv,
+                           dm.get("today_in_progress", False), "day", f"{report['ticker']} daily chart")
+        if svg:
+            leg = (_m_swatch("#f5b041", "EMA20") + _m_swatch("#b388ff", "EMA50") + _m_swatch("#ef5b4d", "stop", True)
+                   + _m_swatch("#2ecc71", "+2R", True) + _m_swatch("#c9d1d9", "resistance", True) + _m_swatch("#4dd0e1", "max buy", True) + _m_swatch("#ffd166", "now", True))
+            out.append(f'<details class="chartbox" open><summary><span>Daily chart</span><span>{len(dm["ohlcv"])} days</span></summary>'
+                       f'{svg}<div class="note">{leg}</div></details>')
+    h = chart.get("ohlcv")
+    if h is not None and not h.empty:
+        lines = []
+        if chart.get("vwap") is not None:
+            lines.append(("VWAP", chart["vwap"], "#6ec1ff"))
+        for nm, ser in list((chart.get("overlays") or {}).items())[:1]:
+            lines.append((nm, ser, "#b388ff"))
+        lv = [("Now", px, "#ffd166", "1 3"), ("Stop", sig.get("stop"), "#ef5b4d", "5 4"), ("+2R", sig.get("arm_level"), "#2ecc71", "2 4")]
+        svg = _m_chart_svg(h, lines, lv, False, "hour", f"{report['ticker']} 1h chart")
+        if svg:
+            leg = "".join(_m_swatch(col, nm) for nm, _, col in lines) + _m_swatch("#ffd166", "now", True)
+            out.append(f'<details class="chartbox"><summary><span>1h chart</span><span>{h.index.normalize().nunique()} days</span></summary>'
+                       f'{svg}<div class="note">{leg}</div></details>')
+    return "".join(out)
+
+
+
+# ---- the rest of the desktop card, minimised: each block is a collapsed section with a one-line teaser
+def _m_kv(items) -> str:
+    """items: [(label_html, value_html)]  (both already HTML-safe, as built for the desktop card)"""
+    def stacked(vl: str) -> bool:
+        return "<br>" in vl or len(re.sub(r"<[^>]+>", "", vl)) > 34
+    return "".join(f'<div class="kv{" stack" if stacked(vl) else ""}"><span>{lb}</span><span>{vl}</span></div>' for lb, vl in items)
+
+
+def _m_details(title: str, teaser: str, inner: str) -> str:
+    return (f'<details><summary><span>{html.escape(title)}</span><span>{teaser}</span></summary>{inner}</details>')
+
+
+def _m_sec_timeframes(report: dict) -> str:
+    cfg, results, sr_levels = report["cfg"], report["results"], report["sr_levels"]
+    blocks, teaser = [], []
+    for tf in ("1D", "4h", "1h"):
+        r, sr = results[tf], sr_levels[tf]
+        pats = ", ".join(r["patterns_detected"]) if r["patterns_detected"] else "-"
+        blocks.append(
+            f'<div class="tfb"><div class="tfh"><b>{tf}</b> {_badge(r["trend_up"], "UP", "DOWN")} '
+            f'{_badge(r["k_above_d"], "K>D", "K<D")} {_badge(not r["overbought"], "OK", "HOT")}</div>'
+            f'<div class="note">close {r["close"]} &middot; {cfg["MA_TYPE"].upper()}{cfg["MA_PERIOD"]} {r["MA"]} &middot; '
+            f'%K {r["%K"]} / %D {r["%D"]}<br>support {sr["support"]} &middot; resistance {sr["resistance"]}'
+            f'<br>candles: {html.escape(pats)}</div></div>')
+        teaser.append(f'{tf} {"up" if r["trend_up"] else "down"}')
+    return _m_details("Timeframes", " &middot; ".join(teaser), "".join(blocks))
+
+
+def _m_sec_levels(report: dict) -> str:
+    cfg, price, tr = report["cfg"], report["current_price"], report["today_range"]
+    items = []
+    fund = report.get("fundamentals") or {}
+    try:
+        lo, hi = float(fund.get("52-Week Low")), float(fund.get("52-Week High"))
+        pos = (price - lo) / (hi - lo) * 100 if hi > lo else 50.0
+        items.append(("52-week range", f"{lo:.2f} - {hi:.2f}<small>price at {pos:.0f}% of the range</small>"))
+        teaser = f"52w at {pos:.0f}%"
+    except (TypeError, ValueError):
+        teaser = ""
+    atr_d = report.get("daily_atr")
+    if atr_d:
+        items.append((f"Daily ATR({cfg['ATR_PERIOD']})", f"{atr_d:.2f}<small>today used {tr['day_range'] / atr_d * 100:.0f}%</small>"))
+        items.append(("ATR projected range", f"{tr['day_high'] - atr_d:.2f} - {tr['day_low'] + atr_d:.2f}"))
+    items += _extended_hours_rows(report)
+    items.append(_premarket_near_row(report))
+    av = report.get("avwap")
+    if av and av.get("value") is not None:
+        items.append((f"Anchored VWAP<small>from {av['anchor_type']} of {av['anchor_date']}</small>",
+                      f"{av['value']} " + ("" if av["above"] is None else _badge(av["above"], "ABOVE", "BELOW"))))
+    st = report.get("hhhl")
+    if st:
+        items += [(f"HH/HL days<small>last {st['window']} completed</small>",
+                   f"{st['up_days']} up / {st['down_days']} down / {st['mixed_days']} mixed<small>net {st['net']:+d}</small>"),
+                  ("Current streak", _streak_text(st["current_streak"])), ("Previous streak", _streak_text(st["previous_streak"]))]
+    items += [("Today's range", f"{tr['day_low']} - {tr['day_high']}<small>range {tr['day_range']}</small>"),
+              ("1h entry support", f"{report['entry_support']}"),
+              ("Day support S1 / S2", _sr_text((report.get("day_sr") or {}).get("supports"))),
+              ("Day resistance T1 / T2", _sr_text((report.get("day_sr") or {}).get("resistances"), with_r=True))]
+    items += _near_sr_rows(report)
+    vb = "" if report.get("above_vwap") is None else _badge(report["above_vwap"], "ABOVE", "BELOW")
+    items += [(f"POC<small>{cfg.get('CHART_DAYS', 7)}d volume profile</small>", f"{report.get('poc', 'N/A')}"),
+              ("Session VWAP", f"{report.get('vwap') if report.get('vwap') is not None else 'N/A'} {vb}")]
+    lrc = report.get("lrc")
+    if lrc:
+        p = lrc["position_pct"]
+        items += [(f"Regression channel<small>{lrc['bars']} bars, {lrc['dev']}&sigma;</small>", f"{lrc['last_lower']} / {lrc['last_mid']} / {lrc['last_upper']}"),
+                  ("Channel slope / fit", f"{lrc['slope_pct_per_day']:+.2f}%/day &middot; R&sup2; {lrc['r2']}"),
+                  ("Price in channel", f"{p:.0f}%" + (" (below)" if p < 0 else " (above)" if p > 100 else ""))]
+    return _m_details("Other levels", html.escape(teaser), _m_kv(items))
+
+
+def _m_sec_catalysts(report: dict) -> str:
+    cat, news = report.get("catalysts") or {}, report.get("news") or []
+    if not cat and not news:
+        return ""
+    cfg = report["cfg"]
+    items, teaser = [], ""
+    if cat:
+        ed, d = cat.get("next_earnings_date") or "N/A", cat.get("days_to_earnings")
+        items.append(("Next earnings", html.escape(str(ed)) + (f" ({d:+d}d)" if d is not None else "") + " "
+                      + _badge(not cat.get("in_earnings_window", False), "CLEAR", "IN WINDOW")))
+        teaser = f"earnings {d:+d}d" if d is not None else ""
+        sp = cat.get("in_sp500")
+        extra = f"<small>added {cat['sp500_added_date']}, {cat.get('days_since_index_addition')}d ago</small>" if cat.get("sp500_added_date") else ""
+        items.append(("S&amp;P 500", ('<span class="badge">N/A</span>' if sp is None else _badge(sp, "MEMBER", "NOT MEMBER")) + extra))
+        if cat.get("recent_index_addition"):
+            items.append(("Recent index addition", _badge(True, "RECENT ADD")))
+        for key, label in (("buyback_headlines", "Buyback headlines"), ("guidance_headlines", "Guidance headlines")):
+            heads = cat.get(key) or []
+            body = ('<span class="muted-small">not checked (no news fetched)</span>' if cat.get("news_skipped")
+                    else "<br>".join(html.escape(x) for x in heads[:4]) or "none")
+            items.append((f"{label} ({len(heads)})", body))
+        acts = cat.get("rating_actions") or []
+        items.append((f"Analyst actions<small>{cat.get('upgrades', 0)} up / {cat.get('downgrades', 0)} down</small>",
+                      "<br>".join(html.escape(a) for a in acts[:5]) or "none"))
+        rank = cat.get("social_rank", "N/A")
+        if rank != "N/A":
+            mom = cat.get("social_momentum_pct", "N/A")
+            mom_s = f"+{mom}%" if isinstance(mom, (int, float)) and mom > 0 else f"{mom}%"
+            items.append(("Reddit (ApeWisdom)", f"rank #{rank}<small>{cat.get('social_mentions', 0)} mentions ({mom_s} 24h), {cat.get('social_upvotes', 0)} upvotes</small>"))
+        else:
+            items.append(("Reddit (ApeWisdom)", '<span class="badge">Not in Top 50</span>'))
+    inner = _m_kv(items)
+    if news:
+        tz = {"America/New_York": "ET", "Asia/Jerusalem": "IL", "UTC": "UTC"}.get(cfg.get("NEWS_TZ", "America/New_York"), "")
+        li = ""
+        for n in news[:8]:
+            url = n["url"] if str(n["url"]).lower().startswith(("http://", "https://")) else ""
+            ttl = html.escape(n["headline"])
+            link = f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{ttl}</a>' if url else ttl
+            li += f'<li><span class="muted-small">{html.escape(n["time"])} {tz}</span><br>{link}</li>'
+        inner += f'<h3>News ({len(news)})</h3><ul class="news">{li}</ul>'
+        teaser = (teaser + " &middot; " if teaser else "") + f"{len(news)} news"
+    elif cat.get("news_skipped"):
+        inner += f'<div class="note">News: {html.escape(str(cat["news_skipped"]))}</div>'
+    return _m_details("Event catalysts", teaser, inner)
+
+
+def _m_sec_analysts(report: dict) -> str:
+    an = report.get("analyst") or {}
+    if not an:
+        return ""
+    counts = an.get("recommendation_counts") or {}
+    total = sum(v for v in counts.values() if isinstance(v, (int, float))) or 0
+    palette = {"strong buy": "#1faa59", "buy": "#2ecc71", "hold": "#f5b041", "sell": "#ef8a4d", "strong sell": "#ef5b4d"}
+    bar = leg = ""
+    if total:
+        segs = "".join(f'<span style="width:{n / total * 100:.1f}%;background:{palette.get(str(lb).lower(), "#6b7686")}"></span>'
+                       for lb, n in counts.items() if n)
+        bar = f'<div class="recbar">{segs}</div>'
+        leg = '<div class="note">' + " &middot; ".join(f"{html.escape(str(lb))} <b>{n}</b>" for lb, n in counts.items()) + "</div>"
+    head = _m_kv([("Consensus", html.escape(str(an.get("recommendation_key", "N/A")))),
+                  ("Mean score", html.escape(str(an.get("recommendation_mean", "N/A")))),
+                  ("# analysts", html.escape(str(an.get("num_analyst_opinions", "N/A"))))])
+    imp = an.get("eps_improving")
+    eps = _m_kv([("Consensus EPS (current qtr)", html.escape(str(an.get("eps_current", "N/A")))),
+                 ("30 days ago", html.escape(str(an.get("eps_30d_ago", "N/A")))),
+                 ("# analysts (EPS)", html.escape(str(an.get("eps_num_analysts", "N/A")))),
+                 ("EPS trend", '<span class="badge">N/A</span>' if imp is None else _badge(imp, "IMPROVING", "DETERIORATING"))])
+    teaser = f'{html.escape(str(an.get("recommendation_key", "")))} ({html.escape(str(an.get("num_analyst_opinions", "")))})'
+    return _m_details("Analysts & EPS revisions", teaser, head + bar + leg + "<h3>EPS estimate revisions</h3>" + eps)
+
+
+def _m_sec_fundamentals(report: dict) -> str:
+    fund = report.get("fundamentals") or {}
+    if not fund:
+        return ""
+    cells = "".join(f'<div class="fcell"><small>{html.escape(str(k))}</small><b>{html.escape(str(v))}</b></div>' for k, v in fund.items())
+    keys = [("Market Cap", "cap"), ("Forward P/E", "fwd P/E")]
+    teaser = " &middot; ".join(f"{lb} {html.escape(str(fund[k]))}" for k, lb in keys if k in fund)
+    return _m_details("Fundamentals", teaser, f'<div class="fgrid">{cells}</div>')
+
+
 def render_mobile_card(report: dict, row: dict) -> str:
     """Compact phone card for one BUY / WATCH ticker."""
     sig = report["signal"]
@@ -4596,6 +4925,10 @@ def render_mobile_card(report: dict, row: dict) -> str:
     sess_html = f'<div class="sess">{sess}</div>' if sess else ""
 
     out = [f'<section class="card {kind}" id="m-{html.escape(tk)}">', head, sub, sess_html]
+    try:
+        out.append(_m_charts(report, sig, px))
+    except Exception as e_:                                   # a chart problem must never hide the card
+        out.append(f'<div class="note">(chart unavailable: {html.escape(type(e_).__name__)})</div>')
 
     out.append(f'<h3>Setup: {html.escape(sig.get("setup_label") or "")}</h3>')
     out.append(f'<div class="note">{html.escape(sig.get("level_desc") or "")}</div>')
@@ -4638,12 +4971,11 @@ def render_mobile_card(report: dict, row: dict) -> str:
                + kv("Higher highs", "yes" if ctx["higher_highs"] else "no", html.escape(str(highs)) if highs else "")
                + "</details>")
 
-    cat = report.get("catalysts") or {}
-    if cat.get("next_earnings_date"):
-        d = cat.get("days_to_earnings")
-        flag = " - IN WINDOW" if cat.get("in_earnings_window") else ""
-        out.append(f'<div class="note">Next earnings: {html.escape(str(cat["next_earnings_date"]))}'
-                   + (f" ({d:+d}d)" if d is not None else "") + flag + "</div>")
+    for sec in (_m_sec_timeframes, _m_sec_levels, _m_sec_catalysts, _m_sec_analysts, _m_sec_fundamentals):
+        try:
+            out.append(sec(report))
+        except Exception as e_:                               # one broken block must not hide the others
+            out.append(f'<div class="note">({sec.__name__[7:]} unavailable: {html.escape(type(e_).__name__)})</div>')
     out.append('<a class="top" href="#top">&uarr; back to list</a></section>')
     return "".join(out)
 

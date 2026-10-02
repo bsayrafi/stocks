@@ -83,10 +83,10 @@ def loadData(num, force_redownload=False):
           #'Market Cap.': '-Small (under $2bln)',
           'Market Cap.': market_cap_options[num],
           'Float Short': 'Under 20%',
-          'Analyst Recom.': 'Buy or better',
+          'Analyst Recom.': 'Hold or better',
 
-          'P/E': 'Profitable (>0)',
-          'Forward P/E': 'Profitable (>0)',
+          #'P/E': 'Profitable (>0)',
+          #'Forward P/E': 'Profitable (>0)',
           #'Current Ratio': 'Over 0.5',
           #'Quick Ratio': 'Over 0.5',
           #'PEG': 'Under 3',
