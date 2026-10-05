@@ -24,6 +24,7 @@ import re
 import os
 import requests
 import datetime as dt
+import json
 try:
     import finnhub  # pip install finnhub-python
 except ImportError:
@@ -151,17 +152,35 @@ class _RateLimiter:
                 sleep_for = 60 - (now - self.calls[0]) + 0.05
             time.sleep(sleep_for)
 
+    def try_acquire(self) -> bool:
+        """Take a slot if one is free RIGHT NOW; never waits."""
+        with self.lock:
+            now = time.monotonic()
+            while self.calls and now - self.calls[0] >= 60:
+                self.calls.popleft()
+            if len(self.calls) < self.per_minute:
+                self.calls.append(now)
+                return True
+            return False
+
 
 _finnhub_limiter = None  # created on first use from CONFIGH["FINNHUB_MAX_PER_MIN"]
 _finnhub_limiter_lock = threading.Lock()
 
 
-def _finnhub_wait() -> None:
+def _finnhub_wait(block: bool = True) -> bool:
+    """Wait for a free Finnhub slot (block=True), or take one only if free right now (block=False -> False if not)."""
     global _finnhub_limiter
     with _finnhub_limiter_lock:
         if _finnhub_limiter is None:
             _finnhub_limiter = _RateLimiter(CONFIGH.get("FINNHUB_MAX_PER_MIN", 55))
+    if not block:
+        return _finnhub_limiter.try_acquire()
     _finnhub_limiter.wait()
+    return True
+
+
+_NEWS_BUSY = object()     # fetch_company_news(wait=False): no free Finnhub slot right now
 
 
 def print_profile_summary(wall_seconds: float, n_tickers: int) -> None:
@@ -195,6 +214,8 @@ def print_profile_summary(wall_seconds: float, n_tickers: int) -> None:
 CONFIGH = {
     "TICKER": "ORCL",
     "PERIOD": "200d",              # max for 1h interval on yfinance is 730d, 60d is plenty here
+    "REFRESH_PERIOD": "5d",        # refresh(): download only this much 1h history and attach it to the bars the full scan
+                                   # saved (same day) - measured 2.7 s vs 4.2 s for 93 tickers. None = always download PERIOD
     "INTERVAL": "1h",
 
     # Stochastic
@@ -296,6 +317,7 @@ CONFIGH = {
     "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,
                                    # "all" = every ticker shown, "none" = no news at all
     "NEWS_CACHE_MIN": 60,          # reuse a ticker's news for this many minutes (0 = always fetch)
+    "NEWS_CACHE_MIN_REFRESH": 360, # refresh(): reuse news up to this old, and never wait on Finnhub's per-minute limit
 }
 
 
@@ -1024,19 +1046,21 @@ def get_pre_market_prices(tickers: list, headers: dict | None = None, feed: str 
 
 @_profiled("news (Finnhub)")
 def fetch_company_news(ticker: str, api_key: str | None = None, days: int = 0,
-                       max_items: int | None = 25, tz: str = "America/New_York") -> list | None:
+                       max_items: int | None = 25, tz: str = "America/New_York", wait: bool = True):
     """Company news from Finnhub for today (and the previous `days` days).
     Returns a list of {"time": "YYYY-MM-DD HH:MM", "date": date, "headline": str,
     "url": str}, newest first, duplicates (same headline) removed, at most
     max_items (None = no limit). Returns [] if there's no news, and None if the
     finnhub package or API key is missing or the request fails.
-    Calls are rate-limited to CONFIGH["FINNHUB_MAX_PER_MIN"] across threads."""
+    Calls are rate-limited to CONFIGH["FINNHUB_MAX_PER_MIN"] across threads. wait=False: if no call is free
+    right now, return _NEWS_BUSY instead of waiting (used by refresh(), which must stay fast)."""
     api_key = api_key or _SECRETS.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_API_KEY")
     if finnhub is None or not api_key:
         return None
     today = dt.date.today()
     try:
-        _finnhub_wait()
+        if not _finnhub_wait(block=wait):
+            return _NEWS_BUSY
         client = finnhub.Client(api_key=api_key)
         news = client.company_news(ticker, _from=str(today - dt.timedelta(days=days)), to=str(today)) or []
     except Exception as e:
@@ -1519,6 +1543,9 @@ SETUP_DEFAULTS = {
     "NTFY_LITE": True,                 # also write <name>_up_lite.html: a phone-friendly list + cards for the BUY / WATCH tickers only
     "NTFY_LITE_ABOVE_MB": 0.0,         # send the phone version whenever the full report is larger than this (0 = always)
     "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
+    "REPORT_SERVER": True,             # "Refresh now" / "Full scan" buttons in the _up report (only shown while report_server.py runs on this Mac)
+    "REPORT_SERVER_PORT": 8765,        # must match report_server.py (REPORT_SERVER_PORT environment variable there)
+    "NTFY_ON_REFRESH": "changes",      # refresh(): send ntfy "changes" (only when a signal changed), "always" or "never"
     "TURN_WATCH": True,                # flag tickers with no setup that close at most TURN_WATCH_MAX_ATR under the EMA50 with the
     "TURN_WATCH_MAX_ATR": 1.5,         # daily AND 1h turn passing: never filtered out, sent to _up, listed (watch only, NOT traded, untested)
     "TRAIL_ARM_R": 2.0,            # the trailing stop arms once price has gained this many R
@@ -2741,11 +2768,14 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     news_all = None
     if news_skipped is None:
         fetch_days = max(news_days, catalyst_days)
-        news_all = ttl_cached(
-            "news", f"{tk}_{fetch_days}",
-            lambda: fetch_company_news(tk, api_key=cfg.get("FINNHUB_API_KEY"), days=fetch_days,
-                                       max_items=None, tz=cfg.get("NEWS_TZ", "America/New_York")),
-            ttl_minutes=cfg.get("NEWS_CACHE_MIN", 60))
+        if cfg.get("_refresh_mode"):
+            news_all = _news_for_refresh(tk, fetch_days, cfg)
+        else:
+            news_all = ttl_cached(
+                "news", f"{tk}_{fetch_days}",
+                lambda: fetch_company_news(tk, api_key=cfg.get("FINNHUB_API_KEY"), days=fetch_days,
+                                           max_items=None, tz=cfg.get("NEWS_TZ", "America/New_York")),
+                ttl_minutes=cfg.get("NEWS_CACHE_MIN", 60))
     # skipped -> [] so event_catalysts doesn't fall back to a Yahoo news call
     headlines = [] if news_skipped else (None if news_all is None else [(n["date"], n["headline"]) for n in news_all])
 
@@ -2935,6 +2965,21 @@ def _hhmm_to_min(s: str) -> int:
     return int(h) * 60 + int(m)
 
 
+def _series_xy(df_index, s, x, y):
+    """[(x(i), y(v))] for the points of series `s` whose timestamp is on the chart index (in the order of `s`).
+    Same result as looking every timestamp up in a {timestamp: position} dict, but vectorised (charts are drawn for
+    every ticker, so this matters)."""
+    if s is None or len(s) == 0:
+        return []
+    if df_index.is_unique:
+        ip = df_index.get_indexer(s.index)
+    else:
+        pos = {ts: i for i, ts in enumerate(df_index)}
+        ip = [pos.get(ts, -1) for ts in s.index]
+    vals = s.to_numpy(dtype=float)
+    return [(x(int(j)), y(float(v))) for j, v in zip(ip, vals) if j >= 0]
+
+
 def render_price_chart_svg(report: dict) -> str:
     """Inline SVG candlestick chart of the last CHART_DAYS trading days (1h bars),
     with MA overlays, POC, 1h support, stop and take-profit levels, dotted
@@ -3083,9 +3128,8 @@ def render_price_chart_svg(report: dict) -> str:
 
     # ---- linear regression channel (drawn behind candles)
     if lrc:
-        pos_lrc = {ts: i for i, ts in enumerate(df.index)}
         def _pts(series):
-            return [(x(pos_lrc[ts]), y(float(v))) for ts, v in series.items() if ts in pos_lrc]
+            return _series_xy(df.index, series, x, y)
         up_pts, lo_pts, mid_pts = _pts(lrc["upper"]), _pts(lrc["lower"]), _pts(lrc["mid"])
         if up_pts:
             poly = " ".join(f"{a:.1f},{b:.1f}" for a, b in up_pts + lo_pts[::-1])
@@ -3093,19 +3137,21 @@ def render_price_chart_svg(report: dict) -> str:
             for cls, pts in (("lrc-band", up_pts), ("lrc-band", lo_pts), ("lrc-mid", mid_pts)):
                 parts.append(f'<polyline class="{cls}" points="{" ".join(f"{a:.1f},{b:.1f}" for a, b in pts)}"/>')
 
-    # ---- volume bars
-    for i, (_, row) in enumerate(df.iterrows()):
+    # ---- volume bars (columns read once as arrays - row-by-row pandas access is slow)
+    O_, H_, L_, C_, V_ = (df[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "Volume"))
+    ts_py = idx.to_pydatetime()
+    for i in range(n):
         cls = color_cls[i]
-        top = vy(float(row["Volume"]))
+        top = vy(float(V_[i]))
         parts.append(f'<rect class="vol {cls}" x="{x(i) - body_w / 2:.1f}" y="{top:.1f}" '
                      f'width="{body_w:.1f}" height="{vol_bot - top:.1f}"/>')
 
     # ---- candles (with native hover tooltip)
-    for i, (_, row) in enumerate(df.iterrows()):
-        o, h, l, c, v = (float(row[k]) for k in ("Open", "High", "Low", "Close", "Volume"))
+    for i in range(n):
+        o, h, l, c, v = float(O_[i]), float(H_[i]), float(L_[i]), float(C_[i]), float(V_[i])
         cls = color_cls[i]
         body_top, body_bot = y(max(o, c)), y(min(o, c))
-        tip = f"{idx[i].strftime('%a %d %b %H:%M')}  O {o:.2f}  H {h:.2f}  L {l:.2f}  C {c:.2f}  Vol {v:,.0f}"
+        tip = f"{ts_py[i].strftime('%a %d %b %H:%M')}  O {o:.2f}  H {h:.2f}  L {l:.2f}  C {c:.2f}  Vol {v:,.0f}"
         parts.append(
             f'<g class="candle {cls}"><title>{html.escape(tip)}</title>'
             f'<line x1="{x(i):.1f}" x2="{x(i):.1f}" y1="{y(h):.1f}" y2="{y(l):.1f}"/>'
@@ -3117,7 +3163,7 @@ def render_price_chart_svg(report: dict) -> str:
     pos = {ts: i for i, ts in enumerate(df.index)}
     legend_mas = []
     for k, (name, s) in enumerate(overlays_clean.items()):
-        pts = " ".join(f"{x(pos[ts]):.1f},{y(float(val)):.1f}" for ts, val in s.items())
+        pts = " ".join(f"{a:.1f},{b:.1f}" for a, b in _series_xy(df.index, s, x, y))
         if pts:
             parts.append(f'<polyline class="ma ma-{k % 4}" points="{pts}"><title>{html.escape(name)}</title></polyline>')
         legend_mas.append(f'<i class="sw ma-sw ma-{k % 4}"></i>{html.escape(name)}')
@@ -3128,7 +3174,7 @@ def render_price_chart_svg(report: dict) -> str:
                             if vwap_clean.index.tz is not None else vwap_clean.index).date)
         for dday in pd.unique(vdays):
             seg = vwap_clean[vdays == dday]
-            pts = " ".join(f"{x(pos[ts]):.1f},{y(float(val)):.1f}" for ts, val in seg.items())
+            pts = " ".join(f"{a:.1f},{b:.1f}" for a, b in _series_xy(df.index, seg, x, y))
             if len(seg) == 1:
                 xx, yy = x(pos[seg.index[0]]), y(float(seg.iloc[0]))
                 pts = f"{xx - step / 2:.1f},{yy:.1f} {xx + step / 2:.1f},{yy:.1f}"
@@ -3264,6 +3310,8 @@ def render_daily_chart_svg(report: dict) -> str:
     # ---- date labels with the abbreviated day name underneath. Every bar is
     # labelled when there's room (~20 bars); with many bars, every other one.
     every = max(1, int(np.ceil(36 / step)))   # keep labels ~36px+ apart (20 bars: all, 50 bars: every 3rd)
+    ts_py = idx.to_pydatetime()               # plain datetimes: much faster than indexing a DatetimeIndex per bar
+    idx = ts_py
     for i in range(n):
         if (n - 1 - i) % every == 0:
             parts.append(f'<text class="axis" x="{x(i):.1f}" y="{vol_bot + 14}" text-anchor="middle">'
@@ -3280,8 +3328,9 @@ def render_daily_chart_svg(report: dict) -> str:
                          f'<title>week of {idx[i].strftime("%d %b")}</title></line>')
 
     # ---- volume, candles, HH/HL markers
-    for i, (_, row) in enumerate(df.iterrows()):
-        o, h, l, c, v = (float(row[k]) for k in ("Open", "High", "Low", "Close", "Volume"))
+    O_, H_, L_, C_, V_ = (df[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "Volume"))
+    for i in range(n):
+        o, h, l, c, v = float(O_[i]), float(H_[i]), float(L_[i]), float(C_[i]), float(V_[i])
         cls = "up" if c >= o else "down"
         partial = in_progress and i == n - 1
         top = vol_bot - (v / vmax) * vol_h
@@ -3307,14 +3356,14 @@ def render_daily_chart_svg(report: dict) -> str:
     pos = {ts: i for i, ts in enumerate(df.index)}
     legend = []
     for k, (name, sser) in enumerate(overlays.items()):
-        pts = " ".join(f"{x(pos[ts]):.1f},{y(float(val)):.1f}" for ts, val in sser.items() if ts in pos)
+        pts = " ".join(f"{a:.1f},{b:.1f}" for a, b in _series_xy(df.index, sser, x, y))
         if pts:
             parts.append(f'<polyline class="ma ma-{k % 4}" points="{pts}"><title>{html.escape(name)} (daily)</title></polyline>')
         legend.append(f'<i class="sw ma-sw ma-{k % 4}"></i>{html.escape(name)}')
 
     # ---- anchored VWAP (line from the anchor day on, dot on the anchor low/high)
     if not av_s.empty:
-        pts = " ".join(f"{x(pos[ts]):.1f},{y(float(v)):.1f}" for ts, v in av_s.items() if ts in pos)
+        pts = " ".join(f"{a:.1f},{b:.1f}" for a, b in _series_xy(df.index, av_s, x, y))
         parts.append(f'<polyline class="avwap" points="{pts}"><title>Anchored VWAP from the '
                      f'{"low" if av["anchor_type"] == "low" else "high"} of '
                      f'{pd.Timestamp(av["anchor_date"]).strftime("%d %b")}</title></polyline>')
@@ -3821,6 +3870,7 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   #tk-tip .neg {{ color: var(--fail); font-weight: 700; }}
   #tk-tip .badge {{ margin-left: 4px; }}
   #tk-tip .sep {{ border-top: 1px solid #2c3550; margin: 6px 0; }}
+  .summary-table th[data-tip] {{ cursor: help; text-decoration: underline dotted rgba(156,220,254,0.45); text-underline-offset: 3px; }}
   .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }}
   .summary-table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
   .summary-table th {{ background: #232a3a; color: var(--accent); padding: 10px 12px; white-space: nowrap; border-bottom: 2px solid #33405a; }}
@@ -3832,6 +3882,14 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .summary-table tr.watch-row td:first-child {{ border-left: 4px solid #f5b041; }}
   .summary-table tr.wait-row td:first-child {{ border-left: 4px solid #556070; }}
   .summary-table tr.turn-row td:first-child {{ border-left: 4px solid #4dd0e1; }}
+  .card-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }}
+  .card-head h2 {{ margin: 0; }}
+  .runbar {{ display: none; align-items: center; gap: 8px; }}
+  .runinfo {{ font-size: 13px; font-weight: 400; color: var(--text); margin: 6px 0 12px; }}
+  .runinfo .t {{ color: var(--pass); font-weight: 600; }}
+  .runbtn {{ display: inline-block; padding: 6px 14px; border-radius: 8px; background: #233a5c; color: #e6e6e6; font-size: 13px;
+            font-weight: 600; text-decoration: none; border: 1px solid #33507a; }}
+  .runbtn:hover {{ background: #2d4a75; }}
   .summary-table tr.wait-row td, .summary-table tr.wait-row a.tk, .summary-table tr.wait-row .px-closed {{ color: #6b7585; }}
   .summary-table td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
   .summary-table th:nth-child(n+4):nth-child(-n+10) {{ text-align: right; }}
@@ -3969,12 +4027,22 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .price-chart .lvl-label.lvl-stop {{ fill: var(--fail); }}
   .price-chart .lvl-label.lvl-target {{ fill: var(--pass); }}
   .price-chart .last {{ fill: var(--text); }}
+  .fab {{ position: fixed; right: 24px; bottom: 24px; z-index: 50; display: none; width: 48px; height: 48px;
+          align-items: center; justify-content: center; border-radius: 50%; background: rgba(35,42,58,.94);
+          border: 1px solid #33405a; color: var(--text); font-size: 22px; font-weight: 700; text-decoration: none;
+          box-shadow: 0 6px 18px rgba(0,0,0,.6); }}
+  .fab:hover {{ background: #2d3a52; }}
+  @media (prefers-reduced-motion: reduce) {{ html {{ scroll-behavior: auto; }} }}
 </style>
 </head>
-<body>
+<body id="top">
 <h1>{html.escape(title)}</h1>
 <div class="subtitle">Multi-Timeframe Buy Signal Screener</div>
 {ticker_sections_html}
+<a class="fab" href="#top" aria-label="Back to top" title="Back to top">&uarr;</a>
+<script>(function(){{var f=document.querySelector('.fab');if(!f)return;
+function u(){{f.style.display=(window.scrollY>500)?'flex':'none'}}u();
+addEventListener('scroll',u,{{passive:true}})}})();</script>
 </body>
 </html>
 """
@@ -4469,14 +4537,71 @@ def _card_id(ticker) -> str:
     return "card-" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(ticker))
 
 
-def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
+# Column descriptions for the 'Setups at a glance' table (shown when you hover a column name).
+_SUMMARY_COLS = [
+    ("Ticker", "Hover a ticker for company, sector, industry, price session and the previous day. "
+               "Click it to jump to its full card."),
+    ("Signal", "<b>BUY</b> = everything passes: daily uptrend, pullback structure, turn on the daily and 1h charts, "
+               "3 of 4 confirmations, R:R 1.5+ and not extended.<br>"
+               "<b>WATCH</b> = valid setup, but something is still missing (listed on the right).<br>"
+               "<b>WAIT</b> (grey) = a pullback setup is forming; too much is missing for a WATCH yet."),
+    ("Setup", "The setup type. Only pullbacks in a confirmed daily uptrend are traded - the only setup "
+              "with a measurable backtest edge."),
+    ("Price", "Last price; grey = the market is closed, so it is the closing price.<br>The small line below is the "
+              "latest after-hours / overnight / pre-market price: green at or above the close, red below."),
+    ("R:R", "Reward-to-risk at the current price (often just called risk/reward): "
+            "(resistance - price) / (price - stop). Higher is better: 1.5 means the possible gain is 1.5 times the "
+            "risk (1 : 1.5 written as risk : reward). A BUY needs at least 1.5."),
+    ("Gap", "Distance from a BUY (0 = BUY; smaller = closer). A missing turn or confirmation counts 1 each, "
+            "a price / R:R problem 2-5, an extended stock 2, a failed structural requirement 3."),
+    ("Buy up to", "The highest entry that still gives R:R of at least 1.5 with the same stop and resistance. "
+                  "Above it the trade no longer pays enough - don't chase."),
+    ("Buy at/below", "The price a pullback must reach for R:R to get to the minimum - the entry zone when the "
+                     "current price is too high."),
+    ("Stop", "Initial stop = 1R of risk: just under the pullback's low (a quarter ATR below it). Once price trades "
+             "+2R, the stop trails under the daily EMA20 (raise only)."),
+    ("Resistance (R:R)", "Nearest real resistance above the price (a swing level with 2+ touches, or a 20-bar / "
+                         "window / 52-week high). Used only to measure R:R - it is not a profit target."),
+    ("What would make it a BUY", "The conditions still missing, in order; all of them must hold. Turn levels "
+                                 "(today's open / mid-range, session VWAP) move during the day."),
+]
+
+
+# ... and for the 'Turning up near the EMA50' table
+_TURN_COLS = [
+    _SUMMARY_COLS[0],
+    ("Price", _SUMMARY_COLS[3][1]),
+    ("Today", "Change since the previous close, during the session (live) - the biggest gain is listed first."),
+    ("EMA50", "The daily 50-day exponential moving average. Closing back above it is the first step back to an "
+              "uptrend; a pullback can only become a BUY in a confirmed uptrend."),
+    ("From EMA50 (ATR)", "How far the close is below the EMA50, in daily ATRs (average daily ranges): -0.2 = a fifth "
+                         "of a normal day's range below. This list only includes stocks at most 1.5 ATR below."),
+    ("EMA50 slope (5d)", "Change of the EMA50 over the last 5 trading days. Negative = still falling; a slope moving "
+                         "towards zero means the decline is losing steam."),
+    ("Trend", "Daily trend state. DOWNTREND = below a falling EMA50. CORRECTION = a shallow dip under the EMA50 "
+              "(at most 0.75 ATR) with the higher lows intact. RANGE = below an EMA50 that is not falling, but too far "
+              "below it or with the higher lows broken."),
+]
+
+
+def _summary_head_html(cols=None) -> str:
+    return "".join(f'<th data-tip="{html.escape(tip, quote=True)}">{html.escape(name)}</th>'
+                   for name, tip in (cols or _SUMMARY_COLS))
+
+
+def _setup_summary_card(rows: list, down_file: str | None = None, header_right: str = "", info: str = "") -> str:
     """One table at the top of the _up report: every BUY and WATCH with its entry zone,
     breakout level, stop, target and the concrete conditions that would turn it into a BUY."""
     # BUY and WATCH first, then traded setups that are still forming (WAIT with a setup), greyed out at the bottom
     picks = [r for r in rows if r.get("signal") in ("BUY", "WATCH")
              or (r.get("signal") == "WAIT" and r.get("setup") is not None)]
+    def head(count):        # no str.format here: the buttons' script contains { }
+        return f'<div class="card-head"><h2>Setups at a glance ({count})</h2>' + header_right + '</div>' + info
     if not picks:
-        return ""
+        # keep the card (and its buttons / run info) even when there is nothing to list
+        return ('<section class="card">' + head(0)
+                + '<p class="note">No BUY, WATCH or forming setups in this report.</p>' + _TIP_SCRIPT + '</section>'
+                ) if (header_right or info) else ""
     n_forming = sum(1 for r in picks if r["signal"] == "WAIT")
     def gap(r):
         v = r.get("setup_distance")
@@ -4508,7 +4633,9 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
                    else f'<strong data-tip="{tip}">{tk}</strong>')
         body += (f'<tr class="{ {"BUY": "buy-row", "WATCH": "watch-row"}.get(r["signal"], "wait-row") }">'
                  f"<td>{tk_html}</td>"
-                 f"<td><span class=\"badge {cls}\">{r['signal']}</span></td>"
+                 f"<td><span class=\"badge {cls}\">{r['signal']}</span>"
+                 + (f'<div class="ext">was {html.escape(str(r["prev_signal"]))}</div>' if r.get("prev_signal") else "")
+                 + "</td>"
                  f"<td style=\"white-space:nowrap\">{html.escape(str(r.get('setup') or '').replace('_', ' ').capitalize())}</td>"
                  f'<td class="num">{_summary_price(r)}</td><td class="num">{f(r.get("setup_rr"))}</td>'
                  f'<td class="num">{gap_html}</td>'
@@ -4518,10 +4645,8 @@ def _setup_summary_card(rows: list, down_file: str | None = None) -> str:
                  f'<td class="buywhen">{waiting}</td></tr>')
     n_active = len(picks) - n_forming
     count = f"{n_active}" + (f" + {n_forming} forming" if n_forming else "")
-    return (f'<section class="card"><h2>Setups at a glance ({count})</h2>'
-            '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Ticker</th><th>Signal</th><th>Setup</th><th>Price</th><th>R:R</th><th>Gap</th><th>Buy up to</th>'
-            '<th>Buy at/below</th><th>Stop</th><th>Resistance (R:R)</th>'
-            '<th>What would make it a BUY</th></tr></thead>'
+    return ('<section class="card">' + head(count) +
+            '<div class="table-wrap"><table class="summary-table"><thead><tr>' + _summary_head_html() + '</tr></thead>'
             f'<tbody>{body}</tbody></table></div>'
             '<p class="note"><strong>Exit plan:</strong> initial stop, no profit target. Once price trades at the <strong>+2R</strong> level, '
             'trail the stop under the daily EMA20 (raise only); leave after 90 trading days at the latest. '
@@ -4563,8 +4688,8 @@ def _turning_up_card(rows: list) -> str:
                  f'<td class="num">{f(r.get("ctx_ema50_slope_pct"), "{:+.2f}%")}</td>'
                  f'<td>{html.escape(str(r.get("ctx_state") or ""))}</td></tr>')
     return (f'<section class="card"><h2>Turning up near the EMA50 ({len(picks)})</h2>'
-            '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Ticker</th><th>Price</th><th>Today</th>'
-            '<th>EMA50</th><th>From EMA50 (ATR)</th><th>EMA50 slope (5d)</th><th>Trend</th></tr></thead>'
+            '<div class="table-wrap"><table class="summary-table"><thead><tr>' + _summary_head_html(_TURN_COLS)
+            + '</tr></thead>'
             f'<tbody>{body}</tbody></table></div>'
             '<p class="note"><strong>Watch only - not a traded setup and not backtested.</strong> No setup yet, the close is at most '
             '1.5 ATR under the daily EMA50, and both turn checks pass (daily: green candle closing in the upper half; '
@@ -4762,7 +4887,8 @@ def _m_chart_svg(df, lines, levels, in_progress=False, date_mode="day", label="c
         gv = vmax - (vmax - vmin) * k / 4
         parts.append(f'<line x1="{pad_l}" x2="{pad_l + plot_w}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#1a2029" stroke-width="1"/>')
         parts.append(f'<text x="{pad_l + 2}" y="{gy - 2:.1f}" font-size="9.5" fill="#566070">{gv:,.2f}</text>')
-    vmaxv = float(np.nanmax(df["Volume"].to_numpy(dtype=float))) or 1.0
+    vol_arr = df["Volume"].to_numpy(dtype=float)
+    vmaxv = float(np.nanmax(vol_arr)) or 1.0
     vol0 = pad_t + price_h + gap
     for i in range(n):
         up = c[i] >= o[i]
@@ -4771,7 +4897,7 @@ def _m_chart_svg(df, lines, levels, in_progress=False, date_mode="day", label="c
         yt, yb = y(max(o[i], c[i])), y(min(o[i], c[i]))
         parts.append(f'<line x1="{x(i):.1f}" x2="{x(i):.1f}" y1="{y(h[i]):.1f}" y2="{y(l[i]):.1f}" stroke="{col}" stroke-width="1"{op}/>')
         parts.append(f'<rect x="{x(i) - body / 2:.1f}" y="{yt:.1f}" width="{body:.1f}" height="{max(1.0, yb - yt):.1f}" fill="{col}"{op}/>')
-        vh = float(df["Volume"].iloc[i]) / vmaxv * vol_h
+        vh = float(vol_arr[i]) / vmaxv * vol_h
         parts.append(f'<rect x="{x(i) - body / 2:.1f}" y="{vol0 + vol_h - vh:.1f}" width="{body:.1f}" height="{max(0.5, vh):.1f}" fill="{col}" opacity=".45"/>')
     for name, series, col in lines:                          # MAs / VWAP (broken at day boundaries for session VWAP)
         try:
@@ -5120,13 +5246,242 @@ def main(tickers, fileapp):
     A ticker is left out entirely only if it fails ALL four checks in
     report_filter_checks() - and only when there are at least REPORT_FILTER_MIN_TICKERS
     (default 20) tickers; a shorter list gets a card for every ticker.
+    Every full run remembers its _up report (tickers, signals, file names) so refresh(fileapp) can update it later.
     Call as main(TICKERS, "name")."""
+    return _run(list(tickers), fileapp, state=None)
+
+
+def refresh_blocked_reason(fileapp):
+    """None if refresh(fileapp) can run; otherwise why a FULL scan is needed instead. A refresh only updates a report
+    whose full scan ran TODAY (local date): the ticker list must be rebuilt by a full scan at least once a day."""
+    state = _load_watchlist(fileapp)
+    if not state or not state.get("tickers"):
+        return "no saved report from a full scan"
+    day = state.get("full_run_date")
+    if day != dt.date.today().isoformat():
+        return f"the last full scan is not from today ({day or 'unknown date'})"
+    return None
+
+
+def _is_setup_row(r: dict) -> bool:
+    """'Setup' tickers for refresh(scope="setups"): BUY / WATCH, a forming setup (WAIT with a setup) or turning up."""
+    return (r.get("signal") in ("BUY", "WATCH") or (r.get("signal") == "WAIT" and r.get("setup") is not None)
+            or bool(r.get("turning_up")))
+
+
+def refresh(fileapp, scope="all"):
+    """Quick refresh of the LAST full run's _up report for `fileapp`, written over the SAME files
+    (<...>_up.html, <...>_up_lite.html; the matching rows of the CSV are updated in place).
+    Only the tickers that were in that _up report are re-screened - with today's cache this takes seconds, not minutes.
+    The _down report is not touched, and tickers that were not in _up are not checked: run main() for that.
+    Signal changes since the previous run (full or refresh) are listed at the top of the report; ntfy is sent
+    according to NTFY_ON_REFRESH ("changes" = only when a signal changed, "always", "never").
+    scope="setups": re-screen only the setup tickers (BUY / WATCH / forming / turning up) - about twice as fast; the
+    other cards are taken over unchanged from the previous run (the report says how old each part is). A ticker that
+    newly forms a setup is only seen by scope="all" (or a full scan)."""
+    why = refresh_blocked_reason(fileapp)
+    if why:
+        print(f"refresh({fileapp!r}): not possible - {why} ({_watchlist_path(fileapp)}). Run main() (a full scan) first.")
+        return None
+    state = _load_watchlist(fileapp)
+    tickers = list(state["tickers"])
+    if scope == "setups":
+        saved = cache_store.read(_cache_path("cards", fileapp), {}) or {}
+        if not saved:
+            print(f"refresh({fileapp!r}, setups): no saved cards from today's runs - refreshing ALL tickers instead")
+            scope = "all"
+        else:
+            tickers = [t for t in tickers if t not in saved or _is_setup_row(saved[t]["row"])]
+            if not tickers:
+                print(f"refresh({fileapp!r}, setups): no setup tickers in this report - nothing to refresh")
+                return None
+    print(f"refresh({fileapp!r}, {scope}): {len(tickers)} of {len(state['tickers'])} tickers, previous run "
+          f"{state.get('last_run_at')} -> {state['paths'].get('up')}")
+    return _run(tickers, fileapp, state=state, scope=scope)
+
+
+# ---------------------------------------------------------------- refresh state ("watchlist")
+# One small JSON per fileapp in the shared cache folder. It has no date in its name, so the daily cache clean-up
+# keeps it: a refresh on Monday morning still finds Friday's report.
+
+def _watchlist_path(fileapp: str) -> str:
+    _cache_sync()
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(fileapp))
+    return os.path.join(cache_store.cache_dir(), f"watchlist_{safe}.json")
+
+
+def _load_watchlist(fileapp: str):
+    try:
+        with open(_watchlist_path(fileapp), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _save_watchlist(fileapp: str, state: dict) -> None:
+    path = _watchlist_path(fileapp)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=1)
+        os.replace(tmp, path)
+    except OSError as e:
+        print(f"WARNING: could not save the refresh list ({type(e).__name__}: {e}) - refresh({fileapp!r}) will not work")
+
+
+def _update_csv_rows(csv_path: str, new_rows: list) -> None:
+    """Replace the refreshed tickers' rows in an existing CSV (other rows and the row order are kept);
+    write a new CSV if there is none (e.g. a fresh GitHub Actions runner)."""
+    if not os.path.exists(csv_path):
+        write_csv_report(new_rows, csv_path)
+        return
+    old = pd.read_csv(csv_path, encoding="utf-8-sig")
+    fresh = {r["ticker"]: r for r in new_rows}
+    rows = [fresh.pop(r["ticker"], r) for r in old.to_dict(orient="records")]    # same order, refreshed rows swapped in
+    rows += list(fresh.values())                                                # tickers the old CSV did not have
+    cols = list(dict.fromkeys(list(old.columns) + [c for r in new_rows for c in r]))
+    pd.DataFrame(rows, columns=cols).to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+
+def _hhmm(txt) -> str:
+    """'Sat 03 Oct 21:30' -> '21:30' (the saved run times are written as '%a %d %b %H:%M')."""
+    t = str(txt or "")
+    return t[-5:] if len(t) >= 5 and t[-3] == ":" else t
+
+
+def _run_info(state, csv_rows: list, times: dict) -> str:
+    """One small line under the 'Setups at a glance' header: when each part of this report was made (times in green)
+    and, after a refresh, which signals changed since the previous run."""
+    g = lambda k: f'<span class="t">{html.escape(_hhmm(times.get(k)))}</span>'
+    if state is None:                                             # full scan
+        return f'<div class="runinfo">Full scan {g("full")}</div>'
+    changes = [(r["ticker"], state["signals"].get(r["ticker"]), r.get("signal")) for r in csv_rows
+               if r.get("signal") and state.get("signals", {}).get(r["ticker"]) not in (None, r.get("signal"))]
+    since = html.escape(_hhmm(state.get("last_run_at")))
+    ch = (f"Signal changes since {since}: " + ", ".join(
+        f'<a class="tk" href="#{_card_id(t)}">{html.escape(t)}</a> {html.escape(a)} &rarr; '
+        f'<span class="badge {"pass" if b == "BUY" else "watch" if b == "WATCH" else "wait"}">{html.escape(b)}</span>'
+        for t, a, b in changes)) if changes else f"no signal changes since {since}"
+    when = (f'Setups refreshed {g("setups")} &middot; others {g("all")}' if times.get("setups") != times.get("all")
+            else f'Refreshed {g("all")}')
+    return (f'<div class="runinfo">{when} &middot; full scan {g("full")} &middot; {len(csv_rows)} tickers &middot; {ch}'
+            '<span class="muted-small"> &middot; the _down report and tickers outside this report are only updated '
+            'by a full scan</span></div>')
+
+
+def _news_for_refresh(tk: str, fetch_days: int, cfg: dict):
+    """News in a refresh: reuse what is cached if younger than NEWS_CACHE_MIN_REFRESH minutes; otherwise fetch -
+    but never WAIT for Finnhub's per-minute limit (93 tickers > 55 calls/minute would stall a refresh for a minute).
+    No free call right now -> keep the older news (or none if there never was any)."""
+    path = _cache_path("news", f"{tk}_{fetch_days}")
+    got = cache_store.read(path)
+    old = got[1] if isinstance(got, tuple) and len(got) == 2 else None
+    if old is not None and time.time() - got[0] < cfg.get("NEWS_CACHE_MIN_REFRESH", 360) * 60:
+        _prof_add("  news reused (refresh)", tk, 0.0)
+        return old
+    val = fetch_company_news(tk, api_key=cfg.get("FINNHUB_API_KEY"), days=fetch_days, max_items=None,
+                             tz=cfg.get("NEWS_TZ", "America/New_York"), wait=False)
+    if val is _NEWS_BUSY:
+        _prof_add("  news kept (Finnhub limit, no waiting in a refresh)", tk, 0.0)
+        return old
+    if val is not None:
+        _cache_write(path, (time.time(), val))
+        return val
+    return old
+
+
+def _merge_hourly(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
+    """The saved history up to where the new download starts, then the new bars (they replace any overlap,
+    including the hour that was still in progress when the full scan ran)."""
+    if new is None or new.empty:
+        return old
+    if old.index.tz is not None and new.index.tz is not None and str(old.index.tz) != str(new.index.tz):
+        new = new.tz_convert(old.index.tz)
+    cut = new.index.min()
+    return pd.concat([old[old.index < cut], new[[c for c in old.columns if c in new.columns]]]).sort_index()
+
+
+def _refresh_hourly(fileapp: str, tickers: list) -> dict:
+    """1h bars for a refresh: the bars the same day's full scan saved + only the last REFRESH_PERIOD downloaded.
+    Tickers without saved bars are downloaded in full; a ticker whose short download fails is left out, so
+    run_screen downloads it on its own (exactly as in a full scan)."""
+    period, full = CONFIGH.get("REFRESH_PERIOD", "5d"), CONFIGH["PERIOD"]
+    old = cache_store.read(_cache_path("hourly", fileapp), {}) or {}
+    have = [t for t in tickers if t in old]
+    miss = [t for t in tickers if t not in old]
+    out = {}
+    if have:
+        new = prefetch_hourly_data(have, period, CONFIGH["INTERVAL"])
+        out = {t: _merge_hourly(old[t], new[t]) for t in have if t in new}
+    if miss:
+        out.update(prefetch_hourly_data(miss, full, CONFIGH["INTERVAL"]))
+    print(f"1h bars: {len(have)} ticker(s) = saved history + last {period}"
+          + (f", {len(miss)} downloaded in full ({full})" if miss else ""))
+    return out
+
+
+def _report_server_token():
+    """The secret shared with report_server.py (file .report_server_token next to the scripts; created if missing)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".report_server_token")
+    try:
+        with open(path, encoding="utf-8") as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    import secrets
+    tok = secrets.token_urlsafe(18)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(tok)
+        os.chmod(path, 0o600)
+    except OSError:
+        return None
+    return tok
+
+
+def _run_bar(report_file: str) -> str:
+    """Buttons that ask the local report_server.py to run `run_trend_entry.py refresh|full`. Hidden unless that server
+    answers on 127.0.0.1 - so they never show on the phone, on GitHub, or when the server is not running.
+    Not written at all when the report is built on GitHub Actions or REPORT_SERVER is off."""
+    if not CONFIGH.get("REPORT_SERVER", True) or os.environ.get("GITHUB_ACTIONS"):
+        return ""
+    tok = _report_server_token()
+    if not tok:
+        return ""
+    base = f"http://127.0.0.1:{int(CONFIGH.get('REPORT_SERVER_PORT', 8765))}"
+    from urllib.parse import urlencode
+
+    def link(mode):
+        return html.escape(f"{base}/run?" + urlencode({"mode": mode, "token": tok, "back": report_file}), quote=True)
+
+    tip_s = ("Fast: update only the setup tickers (WATCH, forming, turning up); the other cards stay as they are. "
+             "New setups are only found by Refresh all")
+    tip_r = ("Update every ticker in this report with fresh data (a full scan of this list instead if its last full scan "
+             "is not from today)")
+    tip_f = "New Finviz list and a full scan of every list (Small, Med, Large) - a few minutes"
+    return (f'<span class="runbar" id="runbar">'
+            f'<a class="runbtn" href="{link("refresh-setups")}" title="{tip_s}">&#x21bb; Refresh setups</a>'
+            f'<a class="runbtn" href="{link("refresh")}" title="{tip_r}">&#x21bb; Refresh all</a>'
+            f'<a class="runbtn" href="{link("full")}" title="{tip_f}" onclick="return confirm(\'Full scan: new Finviz '
+            f'list and every ticker - this takes a few minutes. Start?\')">Full scan</a></span>'
+            f"<script>(function(){{var i=new Image();i.onload=function(){{document.getElementById('runbar')"
+            f".style.display='inline-flex';}};i.src='{base}/ping.gif?'+Date.now();}})();</script>")
+
+
+def _run(tickers, fileapp, state=None, scope="all"):
+    """The full run (state=None) and the quick refresh (state = the saved _up report) share this code."""
+    is_refresh = state is not None
     sections = {"up": [], "down": []}
     skipped = []  # (ticker, reason) - listed at the bottom of both reports
-    # the 4-check filter only makes sense for a long list; with a short list every ticker gets a card
-    filter_on = len(tickers) >= CONFIGH.get("REPORT_FILTER_MIN_TICKERS", 20)
+    # the 4-check filter only makes sense for a long list; with a short list every ticker gets a card.
+    # A refresh never filters: every ticker of the report keeps its card, so you can see one weaken.
+    filter_on = (not is_refresh) and len(tickers) >= CONFIGH.get("REPORT_FILTER_MIN_TICKERS", 20)
+    CONFIGH["_refresh_mode"] = is_refresh            # news: no waiting on Finnhub's limit in a refresh
     CONFIGH["_filter_active"] = filter_on
-    if not filter_on:
+    if not filter_on and not is_refresh:
         print(f"{len(tickers)} tickers (fewer than {CONFIGH.get('REPORT_FILTER_MIN_TICKERS', 20)}): "
               "the report filter is OFF - every ticker gets a card.")
     PROFILE.clear()
@@ -5136,7 +5491,10 @@ def main(tickers, fileapp):
     social_table = fetch_apewisdom_table()   # once per run (mentions change intraday, so not cached)
 
     try:
-        prefetched = prefetch_hourly_data(tickers, CONFIGH["PERIOD"], CONFIGH["INTERVAL"])
+        if is_refresh and CONFIGH.get("REFRESH_PERIOD"):
+            prefetched = _refresh_hourly(fileapp, tickers)
+        else:
+            prefetched = prefetch_hourly_data(tickers, CONFIGH["PERIOD"], CONFIGH["INTERVAL"])
     except Exception as e:
         print(f"batch download failed ({type(e).__name__}: {e}) - falling back to one download per ticker")
         prefetched = {}
@@ -5162,14 +5520,15 @@ def main(tickers, fileapp):
                 print(f"=== {ticker}: filtered out (fails all 4 checks) ===")
                 return ("skip", "filtered out - fails all 4 checks (no setup, downtrend/range, "
                                 "WAIT, EPS deteriorating)", None, report_to_row(report, "filtered"))
-            row_ = report_to_row(report, report["trend_dir"])
+            direction = "up" if is_refresh else report["trend_dir"]     # a refresh rewrites the _up report only
+            row_ = report_to_row(report, direction)
             mobile_ = None
             if report["signal"]["signal"] in ("BUY", "WATCH"):
                 try:
                     mobile_ = render_mobile_card(report, row_)
                 except Exception as e_:                       # never let the phone card break the run
                     print(f"  {ticker}: mobile card failed ({type(e_).__name__}: {e_})")
-            return ("ok", report["trend_dir"], render_ticker_html(report), row_, mobile_)
+            return ("ok", direction, render_ticker_html(report), row_, mobile_)
         except Exception as e:
             print(f"\n=== {ticker}: skipped due to error ===")
             print(f"  {type(e).__name__}: {e}")
@@ -5180,7 +5539,17 @@ def main(tickers, fileapp):
     with ThreadPoolExecutor(max_workers=max(1, int(CONFIGH.get("MAX_WORKERS", 4)))) as ex:
         results = list(ex.map(screen_one, tickers))
 
+    n_screened = len(tickers)
+    if is_refresh and scope == "setups":
+        # partial refresh: the other tickers keep the cards / rows of the previous run, in the report's order
+        saved = cache_store.read(_cache_path("cards", fileapp), {}) or {}
+        fresh = dict(zip(tickers, results))
+        tickers = [t for t in state["tickers"] if t in fresh or t in saved]
+        results = [fresh[t] if t in fresh else ("ok", "up", saved[t]["html"], dict(saved[t]["row"]), saved[t].get("mobile"))
+                   for t in tickers]
     csv_rows = [res[3] for res in results if res[3] is not None]
+    for r in csv_rows:
+        r.pop("prev_signal", None)                    # a saved row may still carry the marker of an older refresh
     lite_cards = []                                   # cards of BUY / WATCH tickers in the up report (for the small ntfy file)
     for ticker, res in zip(tickers, results):
         if res[0] == "ok":
@@ -5190,46 +5559,99 @@ def main(tickers, fileapp):
         else:
             skipped.append((ticker, res[1]))
 
-    tz_gmt3 = timezone(timedelta(hours=3))
-    #timestamp = datetime.now(tz_gmt3).strftime("%Y%m%d_%H%M")
-    timestamp = constants.get_dayprefix()+"_" + constants.get_timeprefix()
+    now_txt = datetime.now().strftime("%a %d %b %H:%M")
+    if not is_refresh:
+        times = {"full": now_txt, "all": now_txt, "setups": now_txt}
+    elif scope == "setups":
+        times = {"full": state.get("full_run_at"), "all": state.get("all_at") or state.get("last_run_at"), "setups": now_txt}
+    else:
+        times = {"full": state.get("full_run_at"), "all": now_txt, "setups": now_txt}
+    if is_refresh:
+        timestamp = state["timestamp"]                # same report, same name
+        out_paths = dict(state["paths"])
+        prev = state.get("signals") or {}
+        for r in csv_rows:                            # "was WATCH" markers in the setups table
+            if r.get("signal") and prev.get(r["ticker"]) not in (None, r.get("signal")):
+                r["prev_signal"] = prev[r["ticker"]]
+    else:
+        timestamp = constants.get_dayprefix() + "_" + constants.get_timeprefix()
+        out_paths = {d: os.path.join("reports", f"{fileapp}_signal_report_{timestamp}_{d}.html") for d in ("up", "down")}
+        out_paths["up_lite"] = out_paths["up"].replace("_up.html", "_up_lite.html")
+        out_paths["csv"] = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}.csv")
+    down_name = os.path.basename(out_paths.get("down") or "")
 
-    out_paths = {}
-    for direction in ("up", "down"):
-        out_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}_{direction}.html")
-        out_paths[direction] = out_path
+    for direction in (("up",) if is_refresh else ("up", "down")):
+        out_path = out_paths[direction]
         report_title = f"{fileapp}_Signal Report {timestamp}_{direction}"
         body = "\n".join(sections[direction]) or (
             f'<section class="card"><p class="note">No tickers in the {direction} report.</p></section>')
         if direction == "up":
-            body = (_setup_summary_card(csv_rows, f"{fileapp}_signal_report_{timestamp}_down.html")
+            body = (_setup_summary_card(csv_rows, down_name, header_right=_run_bar(os.path.basename(out_path)),
+                                        info=_run_info(state, csv_rows, times))
                     + _turning_up_card(csv_rows) + body)
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
-        print(f"HTML report ({direction}, {len(sections[direction])} tickers) written to {out_path}")
+        print(f"HTML report ({direction}, {len(sections[direction])} tickers) "
+              f"{'refreshed' if is_refresh else 'written'}: {out_path}")
         if direction == "up" and CONFIGH.get("NTFY_LITE", True):
-            lite_path = out_path.replace("_up.html", "_up_lite.html")
+            lite_path = out_paths["up_lite"]
             lite_body = mobile_summary(csv_rows) + (
                 "\n".join(lite_cards) if lite_cards else "")
             with open(lite_path, "w", encoding="utf-8") as f:
-                f.write(build_mobile_report(f"{fileapp} {timestamp} - BUY / WATCH", lite_body))
-            out_paths["up_lite"] = lite_path
-            print(f"Lite report ({len(lite_cards)} BUY/WATCH cards) written to {lite_path}")
+                f.write(build_mobile_report(f"{fileapp} {timestamp} - BUY / WATCH"
+                                            + (f" (refreshed {now_txt})" if is_refresh else ""), lite_body))
+            print(f"Lite report ({len(lite_cards)} BUY/WATCH cards) {'refreshed' if is_refresh else 'written'}: {lite_path}")
+        elif direction == "up":
+            out_paths.pop("up_lite", None)
 
-    if CONFIGH.get("CSV_REPORT", True):
-        csv_path = os.path.join("reports", f"{fileapp}_signal_report_{timestamp}.csv")
+    if CONFIGH.get("CSV_REPORT", True) and out_paths.get("csv"):
+        csv_path = out_paths["csv"]
         try:
-            write_csv_report(csv_rows, csv_path)
-            out_paths["csv"] = csv_path
-            print(f"CSV report ({len(csv_rows)} rows) written to {csv_path}")
+            if is_refresh:
+                _update_csv_rows(csv_path, csv_rows)
+                print(f"CSV report: {len(csv_rows)} rows updated in {csv_path}")
+            else:
+                write_csv_report(csv_rows, csv_path)
+                print(f"CSV report ({len(csv_rows)} rows) written to {csv_path}")
         except Exception as e:
             print(f"CSV report failed: {type(e).__name__}: {e}")
 
-    if CONFIGH.get("NTFY_ENABLED", True):
+    # remember this _up report so refresh(fileapp) can update it (the signals let the next refresh show what changed)
+    up_rows = [r for r in csv_rows if r.get("report") == "up"]
+    if not is_refresh and CONFIGH.get("REFRESH_PERIOD"):
+        # keep the _up tickers' 1h bars, so a refresh later today only downloads the last few days
+        _cache_write(_cache_path("hourly", fileapp), {r["ticker"]: prefetched[r["ticker"]]
+                                                     for r in up_rows if r["ticker"] in prefetched})
+    # every _up card of this run, so refresh(scope="setups") can rebuild the page from new + saved cards
+    _cache_write(_cache_path("cards", fileapp),
+                 {t: {"html": res[2], "row": res[3], "mobile": res[4] if len(res) > 4 else None}
+                  for t, res in zip(tickers, results) if res[0] == "ok" and res[1] == "up"})
+    changed = []
+    if is_refresh:
+        changed = [f'{r["ticker"]} {r["prev_signal"]}->{r["signal"]}' for r in csv_rows if r.get("prev_signal")]
+    _save_watchlist(fileapp, {
+        "fileapp": fileapp, "timestamp": timestamp, "paths": out_paths,
+        "tickers": [r["ticker"] for r in up_rows] if not is_refresh else list(tickers),
+        "signals": {r["ticker"]: r.get("signal") for r in up_rows},
+        "full_run_at": state.get("full_run_at") if is_refresh else now_txt,
+        "full_run_date": state.get("full_run_date") if is_refresh else dt.date.today().isoformat(),
+        "last_run_at": now_txt, "all_at": times["all"], "setups_at": times["setups"],
+    })
+
+    notify = CONFIGH.get("NTFY_ENABLED", True)
+    if notify and is_refresh:
+        mode = str(CONFIGH.get("NTFY_ON_REFRESH", "changes")).lower()
+        notify = mode == "always" or (mode == "changes" and bool(changed))
+        if not notify:
+            print(f"ntfy: not sent (NTFY_ON_REFRESH={mode!r}, {len(changed)} signal change(s))")
+    if notify:
         buys = {g: [f'{r["ticker"]}({r.get("setup_label")})' for r in csv_rows if r.get("report") == g and r.get("signal") == "BUY"]
                 for g in ("up", "down")}
         counts = {g: sum(1 for r in csv_rows if r.get("report") == g) for g in ("up", "down")}
         for kind in CONFIGH.get("NTFY_FILES", ["up"]):
+            if is_refresh and kind != "up":
+                continue                                  # only the _up report is refreshed
             path = out_paths.get(kind)
             if (kind == "up" and CONFIGH.get("NTFY_LITE", True) and path and os.path.exists(path)
                     and os.path.getsize(path) / 1024 / 1024 > CONFIGH.get("NTFY_LITE_ABOVE_MB", 1.5)
@@ -5242,12 +5664,15 @@ def main(tickers, fileapp):
                          for r in csv_rows if r.get("report") == kind and r.get("signal") == "WATCH"]
                 msg = (f"{counts[kind]} tickers, BUY_SIGNAL: {', '.join(buys[kind]) or 'none'}"
                        f" | WATCH ({len(watch)}): {', '.join(watch[:12])}{' ...' if len(watch) > 12 else ''}")
+                if changed:
+                    msg = "CHANGED: " + ", ".join(changed) + " | " + msg
                 tags = "chart_with_upwards_trend" if kind == "up" else "chart_with_downwards_trend"
-                prio = "high" if (kind == "up" and buys["up"]) else "default"
+                prio = "high" if (kind == "up" and (buys["up"] or any(c.endswith("->BUY") for c in changed))) else "default"
             else:
                 msg, tags, prio = f"{len(csv_rows)} rows", "page_facing_up", "default"
-            send_ntfy_file(path, title=f"{fileapp} {kind} report {timestamp}", message=msg,
-                           tags=tags, priority=prio)
+            send_ntfy_file(path, title=f"{fileapp} {kind} report {timestamp}" + (f" - refreshed {now_txt}" if is_refresh else ""),
+                           message=msg, tags=tags, priority=prio)
 
     if CONFIGH.get("PROFILE", True):
-        print_profile_summary(time.perf_counter() - run_t0, len(tickers))
+        print_profile_summary(time.perf_counter() - run_t0, n_screened)
+    return out_paths
