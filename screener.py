@@ -270,15 +270,6 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                         )
                     analyst_block.update(smart_signals)
 
-            # --- TradingView TA summary rating ---
-            with profile_step("tradingview", symbol, enabled=CONFIG["ENABLE_TRADINGVIEW"] == 1):
-                tv_block = {}
-                if CONFIG["ENABLE_TRADINGVIEW"] == 1:
-                    tv_rating, tv_votes = get_tradingview_rating_cached(symbol, tv_exchange_map or {})
-                    tv_block["TVRating"] = tv_rating
-                    tv_block["TVBuy"] = tv_votes.get("BUY") if tv_votes else None
-                    tv_block["TVSell"] = tv_votes.get("SELL") if tv_votes else None
-                    tv_block["TVNeutral"] = tv_votes.get("NEUTRAL") if tv_votes else None
 
             # --- Finviz target price / short float ---
             with profile_step("finviz", symbol, enabled=CONFIG["ENABLE_FINVIZ"] == 1):
@@ -302,13 +293,7 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                         sentiment_block["NewsSentiment"] = None
                         sentiment_block["NewsSentimentScore"] = None
 
-            # --- Short interest ---
-            with profile_step("short interest", symbol, enabled=CONFIG["ENABLE_SHORT_INTEREST"] == 1):
-                short_block = {}
-                if CONFIG["ENABLE_SHORT_INTEREST"] == 1:
-                    short_pct, short_ratio = get_short_interest(yf_ticker)
-                    short_block["ShortPctFloat"] = short_pct
-                    short_block["ShortRatio"] = short_ratio
+
 
             # --- EPS revisions / trend / estimate (current-quarter row, if present) ---
             with profile_step("EPS data", symbol, enabled=CONFIG["ENABLE_EPS_DATA"] == 1):
@@ -441,29 +426,6 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                     # QualityScore and QualityDipBuy are NOT set here — computed after the
                     # full batch runs, once sector-relative valuation is available.
 
-            with profile_step("box filters", symbol):
-                box_result = run_pipeline(df)
-                box_row = box_result.iloc[-1]  # latest bar's readout
-
-                box_block = {
-                    "Box_Liquidity_OK": box_row["LIQUIDITY_OK"],
-                    "Box_Trend_OK": box_row["TREND_OK"],
-                    "Box_Not_Choppy": box_row["NOT_CHOPPY"],
-                    "Box_Chop_Value": round(box_row["CHOP_VALUE"], 1) if pd.notna(box_row["CHOP_VALUE"]) else None,
-                    "Box_VolContraction_OK": box_row["VOL_CONTRACTION_OK"],
-                    "Box_Top": round(box_row["BOX_TOP"], 2) if pd.notna(box_row["BOX_TOP"]) else None,
-                    "Box_Bottom": round(box_row["BOX_BOTTOM"], 2) if pd.notna(box_row["BOX_BOTTOM"]) else None,
-                    "Box_Height_ATR": round(box_row["BOX_HEIGHT_ATR"], 2) if pd.notna(box_row["BOX_HEIGHT_ATR"]) else None,
-                    "Box_Top_Touches": box_row["TOP_TOUCHES"],
-                    "Box_Bottom_Touches": box_row["BOTTOM_TOUCHES"],
-                    "Box_Valid": box_row["BOX_VALID"],
-                    "Box_Breakout_Confirmed": box_row["BREAKOUT_CONFIRMED"],
-                    "Box_Signal": box_row["SIGNAL"],
-                    "Box_Avg_Volume_50D": round(box_row["AVG_VOLUME_50D"], 0) if pd.notna(box_row["AVG_VOLUME_50D"]) else None,
-                    "Box_Required_Volume": round(box_row["REQUIRED_BREAKOUT_VOLUME"], 0) if pd.notna(box_row["REQUIRED_BREAKOUT_VOLUME"]) else None,
-                    "Box_Pct_To_Top": round(box_row["PCT_TO_BOX_TOP"], 2) if pd.notna(box_row["PCT_TO_BOX_TOP"]) else None,
-                    "Box_Pct_Above_Bottom": round(box_row["PCT_ABOVE_BOX_BOTTOM"], 2) if pd.notna(box_row["PCT_ABOVE_BOX_BOTTOM"]) else None,
-                }
             
 
             with profile_step("valuation", symbol, enabled=CONFIG["ENABLE_VALUATION"] == 1):
@@ -549,17 +511,14 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                     "DeathCross": death_cross,
                     "ExhaustionSell": exhaustion_sell,
                     **analyst_block,
-                    **tv_block,
                     **finviz_block,
                     **sentiment_block,
-                    **short_block,
                     **eps_block,
                     **earnings_block,
                     **altman_block,
                     **sig,
                     **cash_block,
                     **valuation_block,
-                    **box_block,
                     **intraday_block,
                     **dip_block, 
 
@@ -614,7 +573,7 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
 
     def process_one(symbol):
         with profile_step("whole ticker (run_screen)", symbol):
-            return evaluate_tickers([symbol], data, verbose_errors=False,
+            return evaluate_tickers([symbol], data, verbose_errors=verbose_errors,
                 finbert_pipeline=None, extra_data_store=None,tv_exchange_map=None,
                 premarket_prices=premarket_prices, intraday_ready=intraday_ready, **kwargs)
 
@@ -643,9 +602,10 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
         finally:
             premarket_bg.shutdown(wait=False)
         for row in results:
-            d1_close = row.pop(_D1_CLOSE_KEY, None)
-            cols, _ = _premarket_columns(prices.get(row.get(" Ticker ")), d1_close)
-            row.update(cols)   # existing keys -> column order is unchanged
+           d1_close = row.pop(_D1_CLOSE_KEY, None)
+           sym = row.get(" Ticker ", "").strip('",')   # '"AAPL",' -> 'AAPL'
+           cols, _ = _premarket_columns(prices.get(sym), d1_close)
+           row.update(cols)   # existing keys -> column order is unchanged
 
     return results
 
@@ -680,7 +640,7 @@ def _finish_deferred_intraday(results, data, intraday_future, max_workers) -> No
             sector_dfs[etf] = fetch_intraday(etf)
 
     def analyse(row):
-        symbol = row.get(" Ticker ")
+        symbol = row.get(" Ticker ", "").strip('",')
         sector = row.get(_INTRADAY_KEY)
         if failed is not None:
             return {"symbol": symbol, "error": "intraday_prefetch_failed"}

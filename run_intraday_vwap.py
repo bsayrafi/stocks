@@ -4,6 +4,8 @@ import time
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 
+import tickersV2
+
 # 1. Setup Working Directory for GitHub Actions
 WORK_DIR = os.getcwd() 
 if WORK_DIR not in sys.path:
@@ -33,21 +35,6 @@ from event_catalysts import *
 # 2. Securely load API Token
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
-constants.CONFIG["ENABLE_INTRADAY"] = 1
-
-constants.CONFIG["SHOW_PREMARKET_PRICE"] = 1
-constants.CONFIG["ENABLE_COMPANY_INFO"] = 1
-constants.CONFIG["ENABLE_ANALYST_DATA"] = 1
-constants.CONFIG["ENABLE_SHORT_INTEREST"] = 1
-constants.CONFIG["ENABLE_EPS_DATA"] = 1
-constants.CONFIG["ENABLE_EARNINGS_DATES"] = 1
-constants.CONFIG["ENABLE_CASH_METRICS"] = 1
-constants.CONFIG["ENABLE_FINVIZ"] = 0          # off: slow per-ticker scrape; TargetMean / ShortPctFloat come from yfinance
-constants.CONFIG["ENABLE_CMF"] = 1
-constants.CONFIG["ENABLE_DIP_STRATEGY"]= 1
-constants.CONFIG["ENABLE_VALUATION"]= 1
-constants.CONFIG["DIP_LOOKBACK_DAYS"]= 5
-constants.CONFIG["DIP_QUALITY_MIN_SCORE"]= 50
 
 MAX_WORKERS = 4   # parallel ticker workers (was 6; watch the summary for Yahoo rate-limit outliers)
 
@@ -60,53 +47,49 @@ constants.CONFIG["CACHE_INFO_DAILY"] = 1
 constants.CONFIG["CACHE_ANALYST_DAILY"] = 1
 constants.CONFIG["EARNINGS_FRESH_WINDOW_DAYS"] = 2
 
+lowTickers, midTickers, highTickers = [], [], []     # filled by tickersV2.fetch_tickers() in run()
+my_filters = {
+          'Country': 'USA',
+          'Market Cap.': '+Small (over $300mln)',
+          'Float Short': 'Under 20%',
+          'Analyst Recom.': 'Hold or better',
+          'Average Volume': 'Over 750K',
+          #'P/E': 'Under 50',
+          #'Forward P/E': 'Under 50',
+          'InstitutionalTransactions': 'Positive (>0%)',
+    }
 
 
-def loadData(num, force_redownload=False):
-
+debugTickers = [
+        "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO", "AU", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG", "BWA", "CART", "CAT", "CDE", "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", "CORT", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR", "DOCN", "DT", "ECL", "EMR", "ENTG", "EOG", "ESTC", "ETSY", "EXEL", "EXLS", "EXPE", "FCX", "FIGS", "FIVE", "FIVN", "FLS", "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GOOG", "GOOGL", "GTES", "HALO", "HQY", "INGM", "INOD", "INSW", "INTC", "IOT", "IREN", "KEYS", "KLAC", "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META", "MNST", "MPC", "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS", "NEM", "NESR", "NOW", "NTAP", "NVDA", "NWS", "NWSA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
+        ]
   # 2 Large
   # 1 Medium
   # 0 small
 
-  constants.set_pkl_path(num)
-  market_cap_options = {
-          0: '-Small (under $2bln)',
-          1: 'Mid ($2bln to $10bln)',
-          2: '+Mid (over $2bln)',
-          3: '+Micro (over $50mln)',
-      }
 
 
-  my_filters = {
-          'Country': 'USA',
-          #'Market Cap.': '+Mid (over $2bln)',
-          #'Market Cap.': '-Small (under $2bln)',
-          'Market Cap.': market_cap_options[num],
-          'Float Short': 'Under 20%',
-          'Analyst Recom.': 'Hold or better',
+def getTickers(num):
 
-          #'P/E': 'Profitable (>0)',
-          #'Forward P/E': 'Profitable (>0)',
-          #'Current Ratio': 'Over 0.5',
-          #'Quick Ratio': 'Over 0.5',
-          #'PEG': 'Under 3',
-          #'EPS growthqtr over qtr': 'Positive (>0%)',
-          #'EPS growth ttm': 'Positive (>0%)',
-          #'InstitutionalOwnership': 'Over 20%',
-
-
-          '200-Day Simple Moving Average': 'Price above SMA200',
-          #'Price': 'Under $50',
-          #'RSI (14)': 'Not Overbought (<60)',
-    }
-  print(my_filters)
   with profile_step("main: finviz ticker list"):
     if num!=3:
-        filteredTickers = tickers.get_tickers(my_filters)
+        #filteredTickers = tickers.get_tickers(my_filters)
+        lowTickers, midTickers, highTickers = tickersV2.fetch_tickers(my_filters)
+
     else:
         filteredTickers = debugTickers
+
+    print(f"Ticker counts: Small={len(lowTickers)}, Medium={len(midTickers)}, Large={len(highTickers)}")
+    return lowTickers, midTickers, highTickers
+
+
+def loadData(num, filteredTickers, force_redownload=False):
+
+  constants.set_pkl_path(num)
+
   with profile_step("main: daily price download"):
-    return data_loader.load_or_download_market_data(filteredTickers,force_redownload)
+     _, data = data_loader.load_or_download_market_data(filteredTickers,force_redownload)
+     return data
 
 
 def     setEnable(num):
@@ -117,23 +100,25 @@ def     setEnable(num):
     constants.CONFIG["ENABLE_RAW_STATEMENTS"] = num
     constants.CONFIG["ENABLE_ALTMAN_ZSCORE"] = 0   # always off: saves 2 statement requests per ticker
     constants.CONFIG["ENABLE_CMF"] = num
-    constants.CONFIG["ENABLE_INTRADAY"] = num
+    constants.CONFIG["ENABLE_INTRADAY"] = 0
     constants.CONFIG["ENABLE_DIP_STRATEGY"] = num
     constants.CONFIG["ENABLE_VALUATION"] = num
-    constants.CONFIG["ENABLE_SHORT_INTEREST"] = num
+    constants.CONFIG["ENABLE_SHORT_INTEREST"] = 0
     constants.CONFIG["ENABLE_EPS_DATA"] = num
     constants.CONFIG["ENABLE_EARNINGS_DATES"] = num
     constants.CONFIG["ENABLE_CASH_METRICS"] = num
 
-def runCoreScreener(num=2, force_redownload=True) :
+def runCoreScreener(num=2, filteredTickers=None, force_redownload=True) :
         
 
     start = time.time()
     reset_profile()   # timings are per run (small caps and large caps reported separately)
 
-    filteredTickers, data = loadData(num, force_redownload)
+    data = loadData(num, filteredTickers, force_redownload)
     extra_data_store = {}
 
+    print(f"Loaded {len(data)} tickers of {len(filteredTickers)} requested. ")
+          
     # 1. Check the macro regime first
     with profile_step("main: SPY trend check"):
         market_bullish = screener.is_market_in_uptrend("SPY", 200)
@@ -210,20 +195,19 @@ def runCoreScreener(num=2, force_redownload=True) :
 
 
 
+    
+    
 
 
+lowTickers, midTickers, highTickers = getTickers(0)
 
-debugTickers = [
-        "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO", "AU", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG", "BWA", "CART", "CAT", "CDE", "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", "CORT", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR", "DOCN", "DT", "ECL", "EMR", "ENTG", "EOG", "ESTC", "ETSY", "EXEL", "EXLS", "EXPE", "FCX", "FIGS", "FIVE", "FIVN", "FLS", "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GOOG", "GOOGL", "GTES", "HALO", "HQY", "INGM", "INOD", "INSW", "INTC", "IOT", "IREN", "KEYS", "KLAC", "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META", "MNST", "MPC", "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS", "NEM", "NESR", "NOW", "NTAP", "NVDA", "NWS", "NWSA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
-        ]
-  # 2 Large
-  # 1 Medium
-  # 0 small
+
 setEnable(1)
-force_redownload=False
+force_redownload=True
 #runCoreScreener(num=3, force_redownload=False)
-runCoreScreener(0, force_redownload)
-runCoreScreener(2, force_redownload)
+runCoreScreener(0, lowTickers,force_redownload)
+runCoreScreener(1, midTickers,force_redownload)
+runCoreScreener(2, highTickers,force_redownload)
 setEnable(0)
 
 
