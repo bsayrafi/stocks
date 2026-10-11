@@ -36,7 +36,7 @@ Data folders stay at the root and are created on demand: `data/`, `cache/`, `mod
 |---|---|
 | `common/` | Shared helpers: config (`constants`), indicators, caches, ticker lists, benchmarks, earnings/event catalysts, macro calendar, intraday VWAP levels, survivorship-free universe |
 | `screener/` | v1 daily multi-timeframe screener (`enrich_html`, `screener`, `buy_entry`) |
-| `setups_v2/` | v2 setup engine (`enrich_html_v2`), walk-forward backtest, portfolio simulator, local report server (`setups_v2/install_report_server.sh` on the Mac) |
+| `setups_v2/` | v2 setup screener: `enrich_html_v2` (run / refresh / CSV / ntfy) on top of `engine` (the setup strategy), `indicators`, `data`, `report_html`, `report_mobile`, `config` (all settings); walk-forward backtest, portfolio simulator, local report server (`setups_v2/install_report_server.sh` on the Mac) |
 | `confirm/` | Accumulation confirmation on Alpaca 30-min bars (`dip_confirm`, `trend_confirm`) and its backtest |
 | `fvg/` | Hourly Fair Value Gap ML pipeline: dataset, model, live signal (workflow `run_fvg_signal`), fill analyses. `rule_backtest/` = older rule-based FVG backtester |
 | `trend_tsm/` | Hourly trend model and live signal (launchd `com.bassem.tsm-live-signal`, 07:00) |
