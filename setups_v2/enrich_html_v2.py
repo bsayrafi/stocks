@@ -311,8 +311,8 @@ CONFIGH = {
     # Company news (Finnhub) in the Event Catalysts section, collapsed by default.
     # Key: here, or the FINNHUB_API_KEY environment variable.
     "FINNHUB_API_KEY": _SECRETS.get("FINNHUB_API_KEY"),  # from constants.CONFIG
-    "NEWS_DAYS": 0,                # 0 = today only, 1 = today + yesterday, ...
-    "NEWS_MAX": 25,                # max articles shown per ticker (newest first)
+    "NEWS_DAYS": 1,                # 0 = today only, 1 = today + yesterday, ...
+    "NEWS_MAX": 50,                # max articles shown per ticker (newest first)
     "NEWS_TZ": "America/New_York", # time zone for the article times shown
     "NEWS_FOR": "up",              # Finnhub news for: "up" = only tickers shown in the _up report,
                                    # "all" = every ticker shown, "none" = no news at all
