@@ -16,12 +16,12 @@ The scripts you start live right here in the project root:
 | `run_backtest_flow.py` | backtest of the dip/trend accumulation scores | by hand |
 | `run_mds_scanner.py` | MDS live scanner (`entry` / `daily`) | `run_mds.sh` (launchd) |
 | `run_scan.py` | sector rotation + macro regime scan | workflow `check_sectors` |
-| `run_local_*.sh` | any script with the API keys from `.env` | by hand |
+| `run_local.sh` | any script with the API keys from `.env` | by hand |
 | `run_mds.sh`, `run_tsm_live_signal.sh` | launchd wrappers | launchd on the Mac |
 
     python run_trend_entry.py refresh
-    ./run_local_buyentry.sh                        # run_buy_entry.py with keys from .env
-    ./run_local_buyentry.sh fvg_live_signal.py     # any other script, found in its folder by name
+    ./run_local.sh run_buy_entry.py                # with keys from .env
+    ./run_local.sh fvg_live_signal.py             # any other script, found in its folder by name
 
 Scripts inside the folders run from here too, either way:
 

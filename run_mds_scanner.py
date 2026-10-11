@@ -14,7 +14,7 @@ Usage:
     python3 run_mds_scanner.py daily --size 2
     python3 run_mds_scanner.py daily --tickers NVDA MSFT ANET
     python3 run_mds_scanner.py entry
-    ./run_local_buyentry.sh run_mds_scanner.py daily --size 2      # with keys from .env
+    ./run_local.sh run_mds_scanner.py daily --size 2      # with keys from .env
 """
 
 from __future__ import annotations

@@ -246,10 +246,10 @@ def main():
                               "before it's excluded from actionable as already-chased. Default 0.8 (80%%).")
     args = parser.parse_args()
 
-    api_key = os.environ.get("ALPACA_API_KEY")
-    api_secret = os.environ.get("ALPACA_SECRET_KEY")
+    api_key = os.environ.get("ALPACA_API_KEY") or os.environ.get("APCA_API_KEY_ID")
+    api_secret = os.environ.get("ALPACA_SECRET_KEY") or os.environ.get("APCA_API_SECRET_KEY")
     if not api_key or not api_secret:
-        raise SystemExit("Set ALPACA_API_KEY / ALPACA_SECRET_KEY in your .env file.")
+        raise SystemExit("Set ALPACA_API_KEY / ALPACA_SECRET_KEY (or APCA_API_KEY_ID / APCA_API_SECRET_KEY) in your .env file.")
 
     model_bundle = joblib.load(args.model)
     min_score = args.min_score if args.min_score is not None else model_bundle["threshold"] * 100
