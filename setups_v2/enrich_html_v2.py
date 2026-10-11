@@ -238,29 +238,32 @@ CONFIGH = {
     "VOLUME_MA_PERIOD": 20,
     "VOLUME_MULTIPLIER": 1.0,      # current volume must be >= MULTIPLIER * its rolling avg
 
-    # ATR (for stop sizing only, not part of the signal)
+    # ATR period (daily ATR = the unit for stops and level distances)
     "ATR_PERIOD": 14,
-    "ATR_STOP_MULTIPLIER": 2.0,
 
     # Candlestick pattern detection
     "CANDLE_BODY_RATIO": 0.3,      # body must be <= this fraction of range to count as "small body"
     "CANDLE_WICK_RATIO": 2.0,      # wick must be >= this multiple of body to count as "long wick"
     "CANDLE_BIG_BODY_RATIO": 0.5,  # body must be >= this fraction of range to count as "big body"
 
-    # Support proximity (used by the signal logic) - the level itself is computed
-    # dynamically each run via swing_support_resistance() on the 1h timeframe,
-    # not hardcoded.
-    "SUPPORT_BUFFER_PCT": 0.5,     # % distance from support still counted as "near"
-
     # Support/resistance swing lookback, per timeframe
     "SR_LOOKBACK": {"1D": 10, "4h": 20, "1h": 20},
 
-    "SCORE_THRESHOLD": 3,          # out of 5 soft conditions
-
-    # HTML report price chart (display only, not part of the signal)
+    # ---- phone alerts (ntfy) - every setting for what reaches your phone is here (NTFY_TOPIC / NTFY_TOKEN /
+    #      NTFY_SERVER come from the environment or .env)
     "NTFY_ENABLED": True,          # push the report(s) to your phone via ntfy (needs NTFY_TOPIC)
-    "NTFY_FILES": ["up"],          # which files to send: any of "up", "down", "csv"
+    "NTFY_FILES": ["up"],          # which reports to send: any of "up", "down", "csv"
+    "NTFY_UP_VERSION": "lite",     # which "up" report the phone gets: "lite" = the BUY / WATCH list + their cards only
+                                   # (<name>_up_lite.html, always written next to the full report); "full" = the whole _up report
+    "NTFY_ON_REFRESH": "changes",  # refresh(): send "changes" (only when a signal changed), "always" or "never"
+    "MOBILE_CHART_DAYS": 40,       # daily candles on the lite report's chart
+    "NTFY_PDF": "auto",            # send a PDF instead of the .html: "auto" = if Playwright is installed, True = warn if it is not, False = never
+    "NTFY_LINK": True,             # upload to a storage topic and send the alert with the file's URL in Click + a button (opens in the phone's browser)
+    "NTFY_STORAGE_TOPIC": None,    # default "<NTFY_TOPIC>-files"; nobody should subscribe to it
+    "NTFY_COMPRESS": "auto",       # "auto": zip attachments above NTFY_COMPRESS_ABOVE_MB; True: always; False: never
+    "NTFY_COMPRESS_ABOVE_MB": 1.5,
     "NTFY_MAX_MB": 15,             # ntfy.sh attachment limit; bigger files are announced without the file
+
     "CSV_REPORT": True,            # also write reports/<name>_signal_report_<timestamp>.csv (1 row per ticker)
     "PROFILE": True,               # print a timing breakdown at the end of main()
     "MAX_WORKERS": 4,              # tickers screened in parallel (1 = one at a time)
@@ -380,7 +383,19 @@ def prefetch_pre_market(tickers: list, cfg: dict) -> dict | None:
 
 
 def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """OHLCV bars from 1h bars. "4h" is anchored to the regular session: two bars per day, MARKET_OPEN to
+    MARKET_OPEN + 4h and the rest of the session (09:30-13:30 and 13:30-16:00 ET, the split TradingView uses).
+    A plain resample("4h") counts 4-hour blocks from midnight of the FIRST day in the data, so its bars shift with
+    daylight saving time and differ between the live scan and the backtest (different start dates)."""
     agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+    if str(rule).lower() == "4h" and isinstance(df.index, pd.DatetimeIndex) and len(df):
+        tz = CONFIGH.get("MARKET_TZ", "America/New_York")
+        idx = df.index.tz_convert(tz) if df.index.tz is not None else df.index
+        open_min = int(_hhmm_td(CONFIGH.get("MARKET_OPEN", "09:30")).total_seconds() // 60)
+        mins = idx.hour * 60 + idx.minute
+        start = np.where(mins >= open_min + 240, open_min + 240, open_min)      # which half of the session
+        key = idx.normalize() + pd.to_timedelta(start, unit="m")
+        return df.groupby(key).agg(agg).dropna()
     return df.resample(rule).agg(agg).dropna()
 
 
@@ -545,14 +560,6 @@ def macd_bullish(macd_df: pd.DataFrame) -> bool:
     crossed_up = (prev["macd"] <= prev["signal"]) and (latest["macd"] > latest["signal"])
     above_and_rising = (latest["macd"] > latest["signal"]) and (latest["hist"] > prev["hist"])
     return bool(crossed_up or above_and_rising)
-
-
-def near_support(price: float, support: float, buffer_pct: float) -> bool:
-    return abs(price - support) / support * 100 <= buffer_pct
-
-
-def suggested_stop(price: float, atr_value: float, multiplier: float) -> float:
-    return round(price - multiplier * atr_value, 2)
 
 
 def swing_support_resistance(df: pd.DataFrame, lookback: int) -> dict:
@@ -1534,18 +1541,9 @@ SETUP_DEFAULTS = {
     # ---- strategy
     "TRADEABLE_SETUPS": ("PULLBACK",),   # the only setup with a measurable edge; add "MA_BOUNCE" / "SUPPORT_BOUNCE" / "MA_RECLAIM" / "FRESH_BREAKOUT" to trade them
     "OVERNIGHT_FEED_FALLBACKS": (),    # e.g. ("overnight",): feeds tried in order if OVERNIGHT_FEED is refused (403); see alpaca_check.py
-    "NTFY_COMPRESS": "auto",           # "auto": zip attachments above NTFY_COMPRESS_ABOVE_MB; True: always; False: never
-    "NTFY_COMPRESS_ABOVE_MB": 1.5,
-    "MOBILE_CHART_DAYS": 40,           # daily candles on the phone report's chart
-    "NTFY_LINK": True,                 # upload to a storage topic and send the alert with the file's URL in Click + a button (opens in the phone's browser)
-    "NTFY_STORAGE_TOPIC": None,        # default "<NTFY_TOPIC>-files"; nobody should subscribe to it
-    "NTFY_PDF": "auto",                # send a PDF instead of the .html: "auto" = if Playwright is installed, True = warn if it is not, False = never
-    "NTFY_LITE": True,                 # also write <name>_up_lite.html: a phone-friendly list + cards for the BUY / WATCH tickers only
-    "NTFY_LITE_ABOVE_MB": 0.0,         # send the phone version whenever the full report is larger than this (0 = always)
     "REPORT_FILTER_MIN_TICKERS": 20,   # below this many tickers the report keeps EVERY ticker (no 4-check filter)
     "REPORT_SERVER": True,             # "Refresh now" / "Full scan" buttons in the _up report (only shown while report_server.py runs on this Mac)
     "REPORT_SERVER_PORT": 8765,        # must match report_server.py (REPORT_SERVER_PORT environment variable there)
-    "NTFY_ON_REFRESH": "changes",      # refresh(): send ntfy "changes" (only when a signal changed), "always" or "never"
     "TURN_WATCH": True,                # flag tickers with no setup that close at most TURN_WATCH_MAX_ATR under the EMA50 with the
     "TURN_WATCH_MAX_ATR": 1.5,         # daily AND 1h turn passing: never filtered out, sent to _up, listed (watch only, NOT traded, untested)
     "TRAIL_ARM_R": 2.0,            # the trailing stop arms once price has gained this many R
@@ -1603,7 +1601,7 @@ SETUP_DEFAULTS = {
     # ---- MA reclaim
     "RECLAIM_MIN_HOLD_DAYS": 2,    # consecutive closes above EMA50 before it counts as a reclaim
     "RECLAIM_MAX_EXT_ATR": 2.0,
-    # ---- confirmations needed per setup (each setup has 5 confirmations)
+    # ---- confirmations needed per setup. Each detector lists 4 (MA_RECLAIM: 5); the traded PULLBACK needs 3 of 4
     "MIN_CONFIRMS": {"FRESH_BREAKOUT": 3, "SUPPORT_BOUNCE": 3, "MA_BOUNCE": 3, "PULLBACK": 3, "MA_RECLAIM": 3},
 }
 CONFIGH.update(SETUP_DEFAULTS)
@@ -2605,34 +2603,15 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
 
     vol_ok = volume_confirmed(tf_data["1h"], cfg["VOLUME_MA_PERIOD"], cfg["VOLUME_MULTIPLIER"])
 
-    atr_1h = average_true_range(tf_data["1h"], cfg["ATR_PERIOD"])
     current_price = results["1h"]["close"]
-    stop = suggested_stop(current_price, float(atr_1h.iloc[-1]), cfg["ATR_STOP_MULTIPLIER"])
+    # daily ATR: the unit for every stop / level distance in the setup engine
+    daily_atr_val = float(average_true_range(tf_data["1D"], cfg["ATR_PERIOD"]).iloc[-1])
 
-    # 1. Calculate Daily ATR instead of 1h ATR
-    atr_daily = average_true_range(tf_data["1D"], cfg["ATR_PERIOD"])
-    daily_atr_val = float(atr_daily.iloc[-1])
-    
-    current_price = results["1h"]["close"]
-    
-    # Option A: Pure 2.0x Daily ATR Stop
-    volatility_stop = suggested_stop(current_price, daily_atr_val, cfg["ATR_STOP_MULTIPLIER"])
-
-    # Option B: Structural Volatility Stop (1h Support - 0.5x Daily ATR)
+    # swing support / resistance per timeframe and today's range - context only.
+    # The stop and target come from the setup (evaluate_setups); a ticker with no setup has neither.
     sr_levels = {tf: swing_support_resistance(tf_data[tf], cfg["SR_LOOKBACK"][tf]) for tf in tf_data}
     entry_support = sr_levels["1h"]["support"]
-    structural_stop = round(entry_support - (0.5 * daily_atr_val), 2)
-    
-    # We will pass structural_stop into the final report as the primary stop
-    stop = structural_stop
-
-    risk_per_share = current_price - stop
-    take_profit_target = round(current_price + (1.5 * risk_per_share), 2)
-
-    sr_levels = {tf: swing_support_resistance(tf_data[tf], cfg["SR_LOOKBACK"][tf]) for tf in tf_data}
     today_range = day_range(tf_data["1h"])
-
-    entry_support = sr_levels["1h"]["support"]
 
     # Chart data (display only): MA overlays on 1h + 7-day volume POC
     chart_mas = {}
@@ -2665,13 +2644,6 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
                         "ema20": _d1["Close"].ewm(span=20, adjust=False).mean().iloc[-_nm:],
                         "ema50": _d1["Close"].ewm(span=50, adjust=False).mean().iloc[-_nm:],
                         "today_in_progress": hhhl["today_in_progress"]}
-    # levels are searched over SR_DAYS (independent of how many days the chart shows)
-    day_sr = swing_sr_levels(tf_data["1D"].iloc[-cfg.get("SR_DAYS", 60):], current_price, daily_atr_val, stop,
-                             pivot=cfg.get("SR_PIVOT", 2), merge_atr=cfg.get("SR_MERGE_ATR", 0.5),
-                             min_r=cfg.get("TARGET_MIN_R", 2.0))
-    chart["daily"]["sr"] = day_sr
-    if day_sr["target"]:                     # industry-standard target replaces the old 1.5x risk target
-        take_profit_target = day_sr["target"]["price"]
     vwap_valid = vwap_1h.dropna()
     vwap_now = round(float(vwap_valid.iloc[-1]), 2) if not vwap_valid.empty else None
     above_vwap = (current_price > vwap_now) if vwap_now is not None else None
@@ -2720,15 +2692,17 @@ def run_screen(ticker: str, cfg: dict, sp500_members: dict | None = None,
     signal = evaluate_setups(tf_data["1D"], daily_atr_val, results, stoch["1D"], tf_data["1h"],
                              h1_macd_ok, above_vwap, hhhl["today_in_progress"], cfg,
                              high_52w=(info or {}).get("fiftyTwoWeekHigh"), vwap=vwap_now)
-    if signal["stop"] is not None:      # a setup exists: its own stop/target replace the generic ones
-        stop = signal["stop"]
-        take_profit_target = signal["target"]
-        day_sr = swing_sr_levels(tf_data["1D"].iloc[-cfg.get("SR_DAYS", 60):], current_price, daily_atr_val, stop,
-                                 pivot=cfg.get("SR_PIVOT", 2), merge_atr=cfg.get("SR_MERGE_ATR", 0.5),
-                                 min_r=cfg.get("TARGET_MIN_R", 1.5))
-        day_sr["target"] = {"price": signal["target"], "r": signal["rr"], "source": signal["target_src"],
-                            "below_min_r": signal["rr"] < cfg["SETUP_MIN_RR"]}
-        chart["daily"]["sr"] = day_sr
+    # Trade plan: only a setup has one (its structural stop + the nearest real resistance, used as the R:R filter).
+    # With no setup, stop / target stay None and the daily S/R levels are listed without R multiples.
+    stop, take_profit_target = signal["stop"], signal["target"]
+    # levels are searched over SR_DAYS (independent of how many days the chart shows)
+    day_sr = swing_sr_levels(tf_data["1D"].iloc[-cfg.get("SR_DAYS", 60):], current_price, daily_atr_val, stop,
+                             pivot=cfg.get("SR_PIVOT", 2), merge_atr=cfg.get("SR_MERGE_ATR", 0.5),
+                             min_r=cfg.get("TARGET_MIN_R", 1.5))
+    day_sr["target"] = None if stop is None else {
+        "price": signal["target"], "r": signal["rr"], "source": signal["target_src"],
+        "below_min_r": signal["rr"] < cfg["SETUP_MIN_RR"]}
+    chart["daily"]["sr"] = day_sr
     # A pullback pushes the 1h channel down almost by definition, so the channel would
     # hide exactly the setups we trade. Any traded setup (BUY, WATCH or a still-forming
     # WAIT) goes to the _up report; the channel is only used for tickers with no setup.
@@ -2881,15 +2855,14 @@ def print_report(report: dict) -> None:
 
     print(f"\n1h MACD bullish: {report['h1_macd_ok']}")
     print(f"1h volume confirmed (>= {cfg['VOLUME_MULTIPLIER']}x {cfg['VOLUME_MA_PERIOD']}-period avg): {report['vol_ok']}")
-    print(f"ATR({cfg['ATR_PERIOD']}) suggested stop: {report['stop']} "
-          f"({cfg['ATR_STOP_MULTIPLIER']}x ATR below current price)")
-
-    # <--- ADD THIS BLOCK --->
-    risk = report['current_price'] - report['stop']
-    tgt = (report.get("day_sr") or {}).get("target") or {}
-    print(f"Take-Profit Target: {report['take_profit']} ({tgt.get('source', '1.5x risk')}, "
-          f"{tgt.get('r')}R; risking {risk:.2f} per share)")
-    # <--------------------->
+    if report["stop"] is not None:
+        risk = report['current_price'] - report['stop']
+        tgt = (report.get("day_sr") or {}).get("target") or {}
+        print(f"Initial stop (from the setup): {report['stop']} (risking {risk:.2f} per share)")
+        print(f"Nearest real resistance (R:R filter, no profit target): {report['take_profit']} "
+              f"({tgt.get('source')}, {tgt.get('r')}R)")
+    else:
+        print("No setup - no stop or target")
 
     print_signal_block(signal)
 
@@ -3621,12 +3594,12 @@ def render_ticker_html(report: dict) -> str:
             ("Channel fit (R&sup2;)", f"{lrc['r2']}"),
             ("Price in channel", pos_txt),
         ]
-    other_items += [
-        (("Initial stop (from the setup)" if signal.get("setup") else "Structural stop (1h support - 0.5x daily ATR)"), f"{report['stop']}"),
-        (("<strong>Nearest real resistance (R:R filter; no profit target)</strong>" if signal.get("setup") else
-          f"<strong>Take-Profit Target ({html.escape(((report.get('day_sr') or {}).get('target') or {}).get('source', '1.5x risk'))})</strong>"),
-         f"<strong>{report['take_profit']}</strong>" + _target_r_html(report)),
-    ]
+    if report.get("stop") is not None:          # only a setup has a trade plan
+        other_items += [
+            ("Initial stop (from the setup)", f"{report['stop']}"),
+            ("<strong>Nearest real resistance (R:R filter; no profit target)</strong>",
+             f"<strong>{report['take_profit']}</strong>" + _target_r_html(report)),
+        ]
     other_levels_block = "\n      <h3>Other levels</h3>" + _four_col_table(other_items)
 
     fundamentals = report.get("fundamentals") or {}
@@ -5594,16 +5567,14 @@ def _run(tickers, fileapp, state=None, scope="all"):
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
         print(f"HTML report ({direction}, {len(sections[direction])} tickers) "
               f"{'refreshed' if is_refresh else 'written'}: {out_path}")
-        if direction == "up" and CONFIGH.get("NTFY_LITE", True):
-            lite_path = out_paths["up_lite"]
+        if direction == "up":                         # the lite (phone) version is always written; NTFY_UP_VERSION picks what is sent
+            lite_path = out_paths.setdefault("up_lite", out_paths["up"].replace("_up.html", "_up_lite.html"))
             lite_body = mobile_summary(csv_rows) + (
                 "\n".join(lite_cards) if lite_cards else "")
             with open(lite_path, "w", encoding="utf-8") as f:
                 f.write(build_mobile_report(f"{fileapp} {timestamp} - BUY / WATCH"
                                             + (f" (refreshed {now_txt})" if is_refresh else ""), lite_body))
             print(f"Lite report ({len(lite_cards)} BUY/WATCH cards) {'refreshed' if is_refresh else 'written'}: {lite_path}")
-        elif direction == "up":
-            out_paths.pop("up_lite", None)
 
     if CONFIGH.get("CSV_REPORT", True) and out_paths.get("csv"):
         csv_path = out_paths["csv"]
@@ -5653,10 +5624,9 @@ def _run(tickers, fileapp, state=None, scope="all"):
             if is_refresh and kind != "up":
                 continue                                  # only the _up report is refreshed
             path = out_paths.get(kind)
-            if (kind == "up" and CONFIGH.get("NTFY_LITE", True) and path and os.path.exists(path)
-                    and os.path.getsize(path) / 1024 / 1024 > CONFIGH.get("NTFY_LITE_ABOVE_MB", 1.5)
+            if (kind == "up" and str(CONFIGH["NTFY_UP_VERSION"]).lower() != "full"
                     and out_paths.get("up_lite") and os.path.exists(out_paths["up_lite"])):
-                path = out_paths["up_lite"]               # the full report is big: send the BUY / WATCH-only version
+                path = out_paths["up_lite"]               # the phone gets the BUY / WATCH-only version
             if not path or not os.path.exists(path):
                 continue
             if kind in buys:
