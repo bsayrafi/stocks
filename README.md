@@ -14,10 +14,9 @@ The scripts you start live right here in the project root:
 | `run_trend_entry.py` | v2 setup screener (`enrich_html_v2`) | workflow `run_html_v2`, the local report server |
 | `run_backtest_html2.py` | walk-forward backtest of the v2 setups | by hand |
 | `run_backtest_flow.py` | backtest of the dip/trend accumulation scores | by hand |
-| `run_mds_scanner.py` | MDS live scanner (`entry` / `daily`) | `run_mds.sh` (launchd) |
 | `run_scan.py` | sector rotation + macro regime scan | workflow `check_sectors` |
 | `run_local.sh` | any script with the API keys from `.env` | by hand |
-| `run_mds.sh`, `run_tsm_live_signal.sh` | launchd wrappers | launchd on the Mac |
+| `run_tsm_live_signal.sh` | launchd wrapper | launchd on the Mac |
 
     python run_trend_entry.py refresh
     ./run_local.sh run_buy_entry.py                # with keys from .env
@@ -41,7 +40,5 @@ Data folders stay at the root and are created on demand: `data/`, `cache/`, `mod
 | `confirm/` | Accumulation confirmation on Alpaca 30-min bars (`dip_confirm`, `trend_confirm`) and its backtest |
 | `fvg/` | Hourly Fair Value Gap ML pipeline: dataset, model, live signal (workflow `run_fvg_signal`), fill analyses. `rule_backtest/` = older rule-based FVG backtester |
 | `trend_tsm/` | Hourly trend model and live signal (launchd `com.bassem.tsm-live-signal`, 07:00) |
-| `mds/` | MDS strategy, config, data, backtests, report (see `mds/MDS_STRATEGY.md`; launchd plists here) |
 | `macro/` | Sector rotation and macro regime |
 | `tools/` | One-off checks (Alpaca SIP access) |
-| `archive/` | Old scripts nothing uses (Colab-era `analyze`/`fetch_data`, demos). Safe to delete |
