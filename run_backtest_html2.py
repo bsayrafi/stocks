@@ -34,7 +34,7 @@ tickers = [
 
 
 
-from backtest_v2 import backtest
+from setups_v2.backtest_v2 import backtest
 
 
 #if __name__ == "__main__":

@@ -10,22 +10,22 @@ if WORK_DIR not in sys.path:
     sys.path.insert(0, WORK_DIR)
 
 # Import local modules (Ensure these files are uploaded to your GitHub repo!)
-from benchmarks import benchmark_symbols, get_benchmark_map
-import constants
-import indicators
-import tickers
-import excel_writer
+from common.benchmarks import benchmark_symbols, get_benchmark_map
+from common import constants
+from common import indicators
+from common import tickers
+from common import excel_writer
 import finvizfinance.screener.overview 
-import enrich_html
-import event_catalysts
-import buy_entry
-from buy_entry import *
-from event_catalysts import *
-from flow_common import fetch_intraday_bars
-from dip_confirm import score_dips
-from trend_confirm import score_trends
-from benchmarks import get_benchmark_map
-from backtest_flow import run_backtest
+from screener import enrich_html
+from common import event_catalysts
+from screener import buy_entry
+from screener.buy_entry import *
+from common.event_catalysts import *
+from confirm.flow_common import fetch_intraday_bars
+from confirm.dip_confirm import score_dips
+from confirm.trend_confirm import score_trends
+from common.benchmarks import get_benchmark_map
+from confirm.backtest_flow import run_backtest
 
 # 2. Securely load API Token
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
@@ -92,8 +92,8 @@ def runmain(num=1, runtype="all"):
         #dips = score_dips(enrichment_tickers, bars=bars, benchmarks=bench_map)
         #trends = score_trends(enrichment_tickers, bars=bars, benchmarks=bench_map)
 
-        trend_bt = run_backtest(enrichment_tickers, mode="trend", benchmarks=bench_map, save_csv="trend_bt.csv")
-        dip_bt = run_backtest(enrichment_tickers, mode="dip", benchmarks=bench_map, save_csv="dip_bt.csv")
+        trend_bt = run_backtest(enrichment_tickers, mode="trend", benchmarks=bench_map, save_csv="results/trend_bt.csv")
+        dip_bt = run_backtest(enrichment_tickers, mode="dip", benchmarks=bench_map, save_csv="results/dip_bt.csv")
 
         print(f"time took {time.time() - buy_start:.1f}s")
         #all_df = results2_entry["all"]

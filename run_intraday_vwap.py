@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 
-import tickersV2
+from common import tickersV2
 
 # 1. Setup Working Directory for GitHub Actions
 WORK_DIR = os.getcwd() 
@@ -12,25 +12,25 @@ if WORK_DIR not in sys.path:
     sys.path.insert(0, WORK_DIR)
 
 # Import local modules (Ensure these files are uploaded to your GitHub repo!)
-import constants
-import indicators
-import tickers
-import excel_writer
+from common import constants
+from common import indicators
+from common import tickers
+from common import excel_writer
 import finvizfinance.screener.overview 
-import enrich_html
-import event_catalysts
-import buy_entry
-import screener
-import data_loader
-from profiling import reset_profile, print_profile_summary, profile_step
-import external_data
+from screener import enrich_html
+from common import event_catalysts
+from screener import buy_entry
+from screener import screener
+from common import data_loader
+from common.profiling import reset_profile, print_profile_summary, profile_step
+from screener import external_data
 import requests
-from sector_valuation import *
-from strategy import *
-import screener #type:ignore
+from screener.sector_valuation import *
+from screener.strategy import *
+from screener import screener #type:ignore
 from requests.adapters import HTTPAdapter
-from buy_entry import *
-from event_catalysts import *
+from screener.buy_entry import *
+from common.event_catalysts import *
 
 # 2. Securely load API Token
 os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")

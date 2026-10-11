@@ -43,6 +43,10 @@ done
 # 4. Same folders the GitHub workflow creates, then run
 mkdir -p reports data cache
 PYTHON="${PYTHON:-python3}"
-script="${1:-trend_tsm_live_signal.py}"
+script="${1:-trend_tsm/trend_tsm_live_signal.py}"
 if [[ $# -gt 0 ]]; then shift; fi
+# old flat names still work: "run_mds_scanner.py" is found as "mds/run_mds_scanner.py"
+if [[ ! -f "$script" ]]; then
+  for cand in */"$script" */*/"$script"; do [[ -f "$cand" ]] && { script="$cand"; break; }; done
+fi
 exec "$PYTHON" "$script" ${1+"$@"}   # ${1+"$@"}: safe with no extra args on macOS's bash 3.2

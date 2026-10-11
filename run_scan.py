@@ -8,7 +8,7 @@ Keep this file in the same folder as sector_rotation.py, macro_regime.py, market
 
 import pandas as pd
 
-from market_scan import scan_market
+from macro.market_scan import scan_market
 
 pd.set_option("display.width", 250)
 pd.set_option("display.max_columns", None)     # show every column, no "..."
