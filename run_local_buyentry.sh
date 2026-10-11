@@ -45,4 +45,8 @@ mkdir -p reports data cache
 PYTHON="${PYTHON:-python3}"
 script="${1:-run_buy_entry.py}"
 if [[ $# -gt 0 ]]; then shift; fi
+# old flat names still work: "run_mds_scanner.py" is found as "mds/run_mds_scanner.py"
+if [[ ! -f "$script" ]]; then
+  for cand in */"$script" */*/"$script"; do [[ -f "$cand" ]] && { script="$cand"; break; }; done
+fi
 exec "$PYTHON" "$script" ${1+"$@"}   # ${1+"$@"}: safe with no extra args on macOS's bash 3.2

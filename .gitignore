@@ -1,16 +1,23 @@
-cache/
-logs/
-models/
-.DS_Store
-.venv/
-.env
+# Python
 __pycache__/
 *.pyc
+.venv/
+
+# secrets
 .env
-.env
-reports/
-data/
+.report_server_token
+
+# OS
+.DS_Store
+
+# generated data, caches, logs
+cache/
 htmlv2cache/
+.finviz_cache/
+data/
+reports/
+logs/
+models/
 
-
-
+# this migration's preview
+reorganize_preview.diff

@@ -31,10 +31,10 @@ import pandas as pd
 
 sys.path.insert(0, os.getcwd())
 
-from mds_config import MDS_CONFIG as CFG
-import mds_data as D
-import mds_strategy as S
-import mds_report as R
+from mds.mds_config import MDS_CONFIG as CFG
+from mds import mds_data as D
+from mds import mds_strategy as S
+from mds import mds_report as R
 
 WATCHLIST = os.path.join(CFG["LIVE_DIR"], "mds_watchlist.json")
 ALERT_STATE = os.path.join(CFG["LIVE_DIR"], "mds_alert_state.json")
@@ -193,7 +193,7 @@ def run_daily(a) -> None:
 
     if cfg["NTFY_ENABLED"] and not a.no_ntfy:
         try:
-            from enrich_html import send_ntfy_file
+            from screener.enrich_html import send_ntfy_file
             msg = f"{len(setups)} setups: " + (", ".join(f'{d["symbol"]} <={d["max_entry"]:.2f}' for d in setups[:12]) or "none")
             send_ntfy_file(path, title=title, message=msg, tags="chart_with_upwards_trend",
                            priority="high" if setups else "default")

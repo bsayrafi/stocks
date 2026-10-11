@@ -10,21 +10,21 @@ if WORK_DIR not in sys.path:
     sys.path.insert(0, WORK_DIR)
 
 # Import local modules (Ensure these files are uploaded to your GitHub repo!)
-from benchmarks import benchmark_symbols, get_benchmark_map
-import constants
-import indicators
-import tickers
-import excel_writer
+from common.benchmarks import benchmark_symbols, get_benchmark_map
+from common import constants
+from common import indicators
+from common import tickers
+from common import excel_writer
 import finvizfinance.screener.overview 
-import enrich_html_v2
-import event_catalysts
-import buy_entry
-from buy_entry import *
-from event_catalysts import *
-from flow_common import fetch_intraday_bars
-from dip_confirm import score_dips
-from trend_confirm import score_trends
-import tickersV2
+from setups_v2 import enrich_html_v2
+from common import event_catalysts
+from screener import buy_entry
+from screener.buy_entry import *
+from common.event_catalysts import *
+from confirm.flow_common import fetch_intraday_bars
+from confirm.dip_confirm import score_dips
+from confirm.trend_confirm import score_trends
+from common import tickersV2
 
 
 
