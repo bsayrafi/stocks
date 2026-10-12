@@ -6,6 +6,7 @@ Split out of enrich_html_v2.py, which re-exports every name (enrich_html_v2.X st
 import pandas as pd
 import numpy as np
 import html
+import json
 import re
 from setups_v2.config import _profiled
 from setups_v2.data import _SESSION_NAMES
@@ -1114,6 +1115,29 @@ def build_html_report(title: str, ticker_sections_html: str) -> str:
   .runbtn {{ display: inline-block; padding: 6px 14px; border-radius: 8px; background: #233a5c; color: #e6e6e6; font-size: 13px;
             font-weight: 600; text-decoration: none; border: 1px solid #33507a; }}
   .runbtn:hover {{ background: #2d4a75; }}
+  .sf-bar {{ padding: 14px 20px; }}
+  .sf-row {{ display: flex; gap: 14px; align-items: flex-start; }}
+  .sf-row + .sf-row {{ margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }}
+  .sf-lbl {{ flex: 0 0 84px; padding-top: 4px; font-size: 11px; font-weight: 700; color: var(--muted);
+             text-transform: uppercase; letter-spacing: 0.06em; }}
+  .sf-lbl .sf-links {{ margin-top: 4px; font-weight: 400; text-transform: none; letter-spacing: 0; }}
+  .sf-link {{ background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--accent); cursor: pointer; }}
+  .sf-link:hover {{ text-decoration: underline; }}
+  .sf-btns {{ flex: 1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }}
+  .sf-btn {{ display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+             font: inherit; font-size: 12px; cursor: pointer; background: transparent; color: #6b7585;
+             border: 1px dashed #3a4356; text-decoration: line-through; text-decoration-color: rgba(107,117,133,0.6); }}
+  .sf-btn .n {{ font-size: 11px; font-variant-numeric: tabular-nums; color: inherit; }}
+  .sf-btn.on {{ background: #233a5c; color: var(--text); border: 1px solid #33507a; text-decoration: none; }}
+  .sf-btn.on .n {{ color: var(--accent); }}
+  .sf-btn:hover {{ border-color: var(--accent); }}
+  .sf-empty {{ padding-top: 4px; font-size: 12px; color: var(--muted); font-style: italic; }}
+  .sf-sep {{ width: 1px; align-self: stretch; min-height: 22px; background: var(--border); margin: 0 4px; }}
+  .sf-status {{ margin-top: 10px; font-size: 12px; color: var(--muted); }}
+  .sf-status b {{ color: var(--text); }}
+  .sf-hide {{ display: none !important; }}
+  @media (max-width: 640px) {{ .sf-row {{ flex-direction: column; gap: 6px; }}
+    .sf-lbl {{ flex: none; display: flex; gap: 10px; align-items: baseline; padding-top: 0; }} .sf-lbl .sf-links {{ margin-top: 0; }} }}
   .summary-table tr.wait-row td, .summary-table tr.wait-row a.tk, .summary-table tr.wait-row .px-closed {{ color: #6b7585; }}
   .summary-table td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
   .summary-table th:nth-child(n+4):nth-child(-n+10) {{ text-align: right; }}
@@ -1390,6 +1414,89 @@ def _card_id(ticker) -> str:
     return "card-" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(ticker))
 
 
+# Sector / industry filter: the buttons are built in the browser from the cards and table rows that are
+# actually on the page, so the same bar works on the _up and _down reports and with cached (refreshed) cards.
+_SF_SCRIPT = r"""<script>(function(){
+function init(){
+var bar=document.getElementById('sf-bar');if(!bar)return;
+var map;try{map=JSON.parse(document.getElementById('sf-data').textContent);}catch(e){bar.style.display='none';return;}
+var items=[];
+document.querySelectorAll('section.card[id^="card-"]').forEach(function(el){items.push({el:el,id:el.id});});
+document.querySelectorAll('tr[data-tk]').forEach(function(el){items.push({el:el,id:el.getAttribute('data-tk')});});
+var present={};items.forEach(function(it){if(map[it.id])present[it.id]=map[it.id];});
+var ids=Object.keys(present);if(!ids.length){bar.style.display='none';return;}
+var secN={},indN={},indSec={};
+ids.forEach(function(id){var s=present[id][0],i=present[id][1];secN[s]=(secN[s]||0)+1;indN[i]=(indN[i]||0)+1;if(!(i in indSec))indSec[i]=s;});
+function byCount(n){return function(a,b){return (n[b]-n[a])||a.localeCompare(b);};}
+var secs=Object.keys(secN).sort(byCount(secN));
+var KEY='sf:'+location.pathname,offS={},offI={};
+try{var st=JSON.parse(sessionStorage.getItem(KEY)||'{}');(st.s||[]).forEach(function(k){offS[k]=1;});(st.i||[]).forEach(function(k){offI[k]=1;});}catch(e){}
+function save(){try{sessionStorage.setItem(KEY,JSON.stringify({s:Object.keys(offS),i:Object.keys(offI)}));}catch(e){}}
+function btn(kind,name,n,tip){var b=document.createElement('button');b.type='button';b.className='sf-btn';
+b.setAttribute('data-kind',kind);b.setAttribute('data-k',name);b.setAttribute('aria-pressed','true');if(tip)b.title=tip;
+var t=document.createElement('span');t.textContent=name;var c=document.createElement('span');c.className='n';c.textContent=n;
+b.appendChild(t);b.appendChild(c);return b;}
+var sBox=document.getElementById('sf-s'),iBox=document.getElementById('sf-i'),sBtns=[],iBtns=[];
+secs.forEach(function(s){var b=btn('s',s,secN[s]);sBox.appendChild(b);sBtns.push(b);});
+var groups={};
+secs.forEach(function(s){groups[s]=Object.keys(indN).filter(function(i){return indSec[i]===s;}).sort(byCount(indN))
+.map(function(i){var b=btn('i',i,indN[i],s);iBtns.push(b);return b;});});
+var status=document.getElementById('sf-status');
+function apply(){
+sBtns.forEach(function(b){var on=!offS[b.getAttribute('data-k')];b.classList.toggle('on',on);b.setAttribute('aria-pressed',on);});
+iBtns.forEach(function(b){var on=!offI[b.getAttribute('data-k')];b.classList.toggle('on',on);b.setAttribute('aria-pressed',on);});
+iBox.textContent='';var first=true;
+secs.forEach(function(s){if(offS[s]||!groups[s].length)return;
+if(!first){var sep=document.createElement('span');sep.className='sf-sep';iBox.appendChild(sep);}first=false;
+groups[s].forEach(function(b){iBox.appendChild(b);});});
+if(first){var em=document.createElement('span');em.className='sf-empty';em.textContent='Select a sector to see its industries';iBox.appendChild(em);}
+var shown={};
+items.forEach(function(it){var v=present[it.id];var hide=!!(v&&(offS[v[0]]||offI[v[1]]));it.el.classList.toggle('sf-hide',hide);if(v&&!hide)shown[it.id]=1;});
+var nShown=Object.keys(shown).length,nOff=Object.keys(offS).length+Object.keys(offI).length;
+status.innerHTML='Showing <b>'+nShown+'</b> of '+ids.length+' tickers'+(nOff?' &middot; <button type="button" class="sf-link" id="sf-reset">Show all</button>':'');
+var r=document.getElementById('sf-reset');if(r)r.onclick=function(){offS={};offI={};save();apply();};}
+bar.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
+var kind=b.getAttribute('data-kind'),k=b.getAttribute('data-k'),all=b.getAttribute('data-all'),none=b.getAttribute('data-none');
+if(kind){var o=kind==='s'?offS:offI;if(o[k])delete o[k];else o[k]=1;}
+else if(all){if(all==='s')offS={};else offI={};}
+else if(none){if(none==='s'){offS={};secs.forEach(function(s){offS[s]=1;});}else{Object.keys(indN).forEach(function(i){if(!offS[indSec[i]])offI[i]=1;});}}
+else return;save();apply();});
+apply();}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();</script>"""
+
+
+def _sector_filter_bar(rows: list) -> str:
+    """Two rows of toggle buttons under the report title - one per sector, one per industry - all selected at
+    first. Turning a button off hides the matching ticker cards and their rows in the tables at the top.
+    A ticker is shown only while both its sector and its industry are on; the Industry row lists only the
+    industries of the sectors that are on. The choice is kept for the browser
+    tab (sessionStorage), so it survives a Refresh of the same report."""
+    def clean(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return ""
+        v = str(v).strip()
+        return "" if v.lower() in ("n/a", "nan", "none") else v
+
+    data = {_card_id(r["ticker"]): [clean(r.get("sector")) or "Unknown", clean(r.get("industry")) or "Unknown"]
+            for r in rows if r.get("ticker") is not None}
+    if not data:
+        return ""
+    js = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+
+    def row(kind, label):
+        return (f'<div class="sf-row"><div class="sf-lbl">{label}<div class="sf-links">'
+                f'<button type="button" class="sf-link" data-all="{kind}">All</button> &middot; '
+                f'<button type="button" class="sf-link" data-none="{kind}">None</button></div></div>'
+                f'<div class="sf-btns" id="sf-{kind}"></div></div>')
+
+    return ('<section class="card sf-bar" id="sf-bar" aria-label="Filter by sector and industry">'
+            + row("s", "Sector") + row("i", "Industry")
+            + '<div class="sf-status" id="sf-status"></div>'
+            + f'<script type="application/json" id="sf-data">{js}</script>'
+            + _SF_SCRIPT + '</section>')
+
+
 # Column descriptions for the 'Setups at a glance' table (shown when you hover a column name).
 _SUMMARY_COLS = [
     ("Ticker", "Hover a ticker for company, sector, industry, price session and the previous day. "
@@ -1484,7 +1591,8 @@ def _setup_summary_card(rows: list, down_file: str | None = None, header_right: 
         tip = html.escape(_ticker_tip(r), quote=True)
         tk_html = (f'<a class="tk" href="{html.escape(href)}" data-tip="{tip}">{tk}</a>' if href
                    else f'<strong data-tip="{tip}">{tk}</strong>')
-        body += (f'<tr class="{ {"BUY": "buy-row", "WATCH": "watch-row"}.get(r["signal"], "wait-row") }">'
+        body += (f'<tr class="{ {"BUY": "buy-row", "WATCH": "watch-row"}.get(r["signal"], "wait-row") }" '
+                 f'data-tk="{_card_id(r["ticker"])}">'
                  f"<td>{tk_html}</td>"
                  f"<td><span class=\"badge {cls}\">{r['signal']}</span>"
                  + (f'<div class="ext">was {html.escape(str(r["prev_signal"]))}</div>' if r.get("prev_signal") else "")
@@ -1535,7 +1643,7 @@ def _turning_up_card(rows: list) -> str:
         tip = html.escape(_ticker_tip(r), quote=True)
         chg = num(r.get("day_chg_pct"))
         chg_html = "" if chg is None else f'<span class="{"pos" if chg >= 0 else "neg"}">{chg:+.2f}%</span>'
-        body += (f'<tr class="turn-row"><td><a class="tk" href="#{_card_id(r["ticker"])}" data-tip="{tip}">{tk}</a></td>'
+        body += (f'<tr class="turn-row" data-tk="{_card_id(r["ticker"])}"><td><a class="tk" href="#{_card_id(r["ticker"])}" data-tip="{tip}">{tk}</a></td>'
                  f'<td class="num">{_summary_price(r)}</td><td class="num">{chg_html}</td>'
                  f'<td class="num">{f(r.get("ctx_ema50"))}</td><td class="num">{f(r.get("ctx_ext_ema50_atr"))}</td>'
                  f'<td class="num">{f(r.get("ctx_ema50_slope_pct"), "{:+.2f}%")}</td>'

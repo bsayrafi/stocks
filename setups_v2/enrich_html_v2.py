@@ -185,6 +185,7 @@ from setups_v2.report_html import (  # noqa: F401
     _summary_head_html,
     _setup_summary_card,
     _turning_up_card,
+    _sector_filter_bar,
 )
 from setups_v2.report_mobile import (  # noqa: F401
     _M_CSS,
@@ -1257,9 +1258,12 @@ def _run(tickers, fileapp, state=None, scope="all"):
         body = "\n".join(sections[direction]) or (
             f'<section class="card"><p class="note">No tickers in the {direction} report.</p></section>')
         if direction == "up":
-            body = (_setup_summary_card(csv_rows, down_name, header_right=_run_bar(os.path.basename(out_path)),
+            body = (_sector_filter_bar(csv_rows)
+                    + _setup_summary_card(csv_rows, down_name, header_right=_run_bar(os.path.basename(out_path)),
                                         info=_run_info(state, csv_rows, times))
                     + _turning_up_card(csv_rows) + body)
+        else:
+            body = _sector_filter_bar([r for r in csv_rows if r.get("report") == direction]) + body
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(build_html_report(report_title, body + _skipped_card(skipped)))
