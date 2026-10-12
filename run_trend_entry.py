@@ -33,7 +33,10 @@ os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 debug_enrichment_tickers = [
 
-  "META", "AAPL", "AMZN", "GOOG", "MSFT", "TSLA", "NVDA", "QCOM", "ARLO", "PSX"
+    "COUR","KDK","FLY","KEEL","G",
+    "G","FIS","GEN","CPRT","BSY","U","CGNX",
+    "NVDA","WDAY","ETSY","CSCO","ABNB","TTMI","DIS","SNPS","COST",
+
     ]
 
 my_filters = {
