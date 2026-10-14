@@ -33,9 +33,8 @@ os.environ["HF_TOKEN"] = os.environ.get("HF_TOKEN", "")
 
 debug_enrichment_tickers = [
 
-    "COUR","KDK","FLY","KEEL","G",
-    "G","FIS","GEN","CPRT","BSY","U","CGNX",
-    "NVDA","WDAY","ETSY","CSCO","ABNB","TTMI","DIS","SNPS","COST",
+    "S", "CCC","WLTH",
+        "LDOS","DOCN","NOW","INTU","AVT","CRM","FICO","AAPL","MSFT","IBM","DDOG","WDAY",
 
     ]
 

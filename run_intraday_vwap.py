@@ -50,18 +50,22 @@ constants.CONFIG["EARNINGS_FRESH_WINDOW_DAYS"] = 2
 lowTickers, midTickers, highTickers = [], [], []     # filled by tickersV2.fetch_tickers() in run()
 my_filters = {
           'Country': 'USA',
-          'Market Cap.': '+Small (over $300mln)',
+          'Market Cap.': '+Micro (over $50mln)',
           'Float Short': 'Under 20%',
-          'Analyst Recom.': 'Hold or better',
-          'Average Volume': 'Over 750K',
+          'Sector': 'Technology',
+          #'Analyst Recom.': 'Hold or better',
+          'Average Volume': 'Over 500K',
           #'P/E': 'Under 50',
-          #'Forward P/E': 'Under 50',
-          'InstitutionalTransactions': 'Positive (>0%)',
+          #'Forward P/E': 'Under 60',
+          #'InstitutionalTransactions': 'Positive (>0%)',
+          #'Price': 'Under $2',
     }
 
 
 debugTickers = [
-        "A", "AAOI", "AAPL", "ABNB", "ACMR", "ADI", "AER", "AIR", "ALAB", "AMAT", "AMD", "AME", "AMRX", "AMZN", "ANET", "APH", "ARMK", "ARQT", "ATI", "ATRO", "AU", "AVGO", "AVNT", "AVPT", "AXTA", "BE", "BIIB", "BTSG", "BWA", "CART", "CAT", "CDE", "CDNA", "CDNS", "CDW", "CGNX", "CHRD", "CIEN", "COHR", "COP", "CORT", "CRDO", "CRM", "CRVW", "CRWD", "CSCO", "CTAS", "CTVA", "CVLT", "CVX", "DASH", "DDOG", "DELL", "DGX", "DHR", "DOCN", "DT", "ECL", "EMR", "ENTG", "EOG", "ESTC", "ETSY", "EXEL", "EXLS", "EXPE", "FCX", "FIGS", "FIVE", "FIVN", "FLS", "FLYW", "FORM", "FRSH", "FTI", "GEV", "GLW", "GOOG", "GOOGL", "GTES", "HALO", "HQY", "INGM", "INOD", "INSW", "INTC", "IOT", "IREN", "KEYS", "KLAC", "KO", "LECO", "LITE", "LLY", "LRCX", "MANH", "MDB", "META", "MNST", "MPC", "MRK", "MRVL", "MSFT", "MTCH", "MTSI", "MU", "NBIS", "NEM", "NESR", "NOW", "NTAP", "NVDA", "NWS", "NWSA", "OKTA", "ONTO", "ORCL", "P", "PAA", "PANW", "PARR", "PAY", "PCTY", "PDFS", "PH", "PLTR", "PR", "PSX", "Q", "QCOM", "REGN", "RGLD", "RKLB", "ROK", "ROST", "SANM", "SCHW", "SHC", "SITM", "SKHY", "SLB", "SMTC", "SNDK", "SNX", "SOFI", "SPCX", "SSRM", "TER", "TKR", "TMO", "TOST", "TSLA", "TSM", "TTC", "TTEK", "TWLO", "TXN", "UBER", "VCYT", "VEEV", "VSH", "VST", "WAT", "WAY", "WDAY", "WK", "WSM", "XYZ", "ZBRA", "ZM"
+    "S", "CCC","WLTH",
+    "LDOS","DOCN","NOW","INTU","AVT","CRM","FICO","AAPL","MSFT","IBM","DDOG","WDAY",
+
         ]
   # 2 Large
   # 1 Medium
