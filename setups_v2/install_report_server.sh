@@ -4,7 +4,7 @@
 #   source .venv/bin/activate          # (or however you activate the venv the screener runs in)
 #   ./install_report_server.sh         # uses that venv's python3
 #   ./install_report_server.sh /path/to/venv/bin/python3     # or name the python explicitly
-#   ./install_report_server.sh --uninstall
+#   ./install_report_server.sh --uninstall/Applications/Mirror for LG TV.app
 #
 # Output of the server goes to logs/report_server.log next to this script.
 set -euo pipefail
