@@ -12,6 +12,11 @@ def load_or_download_market_data(sp500_tickers,force_redownload=False):
     """
     PKL_PATH = CONFIG["PKL_PATH"]
 
+    if not sp500_tickers:
+        # yf.download([]) dies inside pandas with "No objects to concatenate"
+        print("No tickers to download; skipping.")
+        return [], None
+
     #print (PKL_PATH)
     if os.path.exists(PKL_PATH) and not force_redownload:
         with open(PKL_PATH, "rb") as f:

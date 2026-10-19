@@ -50,11 +50,11 @@ constants.CONFIG["EARNINGS_FRESH_WINDOW_DAYS"] = 2
 lowTickers, midTickers, highTickers = [], [], []     # filled by tickersV2.fetch_tickers() in run()
 my_filters = {
           'Country': 'USA',
-          'Market Cap.': '+Micro (over $50mln)',
+          'Market Cap.': '+Small (over $300mln)',
           'Float Short': 'Under 20%',
-          'Sector': 'Technology',
-          #'Analyst Recom.': 'Hold or better',
-          'Average Volume': 'Over 500K',
+          #'Sector': 'Technology',
+          'Analyst Recom.': 'Hold or better',
+          'Average Volume': 'Over 1M',
           #'P/E': 'Under 50',
           #'Forward P/E': 'Under 60',
           #'InstitutionalTransactions': 'Positive (>0%)',
@@ -115,10 +115,17 @@ def     setEnable(num):
 def runCoreScreener(num=2, filteredTickers=None, force_redownload=True) :
         
 
+    if not filteredTickers:
+        print(f"[bucket {num}] No tickers - skipping.")
+        return
+
     start = time.time()
     reset_profile()   # timings are per run (small caps and large caps reported separately)
 
     data = loadData(num, filteredTickers, force_redownload)
+    if data is None or len(data) == 0:
+        print(f"[bucket {num}] No price data downloaded - skipping.")
+        return
     extra_data_store = {}
 
     print(f"Loaded {len(data)} tickers of {len(filteredTickers)} requested. ")

@@ -1,6 +1,8 @@
 
 import io
 import os
+import re
+import time
 import json
 import hashlib
 from datetime import date, datetime
@@ -23,15 +25,145 @@ def _filters_key(my_filters):
     return hashlib.md5(key.encode("utf-8")).hexdigest()[:12]
 
 
+_FINVIZ_URL = "https://finviz.com/screener.ashx"
+_FINVIZ_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+# Finviz redesigned the screener in Oct 2026 (screener.ashx now redirects to /screener/stocks).
+#  - Rows are <div class="fv-table_row" data-row-key="TICKER"> with cells <div data-column-id="price">.
+#    finvizfinance (<= 1.5.0) still looks for the old <select id="pageSelect"> and <table>, finds
+#    neither, logs "No ticker found." and returns None - so every bucket came back empty.
+#  - Without a login, only the first 1000 results of a query can be paged (r=1001 and later -> 403).
+#    Bigger result sets are split by sector, and each part is read from both ends (asc + desc).
+_ROW_RE = re.compile(r'<div class="fv-table_row"[^>]*\bdata-row-key="([^"]+)"(.*?)(?=<div class="fv-table_row"|$)', re.S)
+_PRICE_RE = re.compile(r'data-column-id="price"[^>]*>\s*([^<]*)<')
+_TOTAL_RE = re.compile(r'([\d,]+)\s*Total')
+_MAX_RESULTS = 1000                    # deepest row Finviz serves without a login
+_SECTORS = ["basicmaterials", "communicationservices", "consumercyclical", "consumerdefensive", "energy",
+            "financial", "healthcare", "industrials", "realestate", "technology", "utilities"]
+
+
+def _get_page(session, params, retries=4):
+    for attempt in range(retries):
+        try:
+            r = session.get(_FINVIZ_URL, params=params, headers=_FINVIZ_HEADERS, timeout=30)
+            if r.status_code in (403, 429) or r.status_code >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}")
+            r.raise_for_status()
+            return r.text
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            wait = (10, 30, 60)[min(attempt, 2)]          # 403/429 here = rate limit: back off properly
+            print(f"  Finviz page r={params.get('r', 1)} failed ({e}); retrying in {wait}s")
+            time.sleep(wait)
+
+
+def _parse_rows(html):
+    rows = []
+    for ticker, body in _ROW_RE.findall(html):
+        m = _PRICE_RE.search(body)
+        price = m.group(1).strip().replace(",", "") if m else None
+        rows.append({"Ticker": ticker, "Price": price})
+    return rows
+
+
+def _parse_total(html, rows):
+    m = _TOTAL_RE.search(html)
+    return int(m.group(1).replace(",", "")) if m else len(rows)
+
+
+class _LayoutError(Exception):
+    pass
+
+
+def _fetch_query(session, f_codes, sleep_sec, first_html=None):
+    """All rows for one filter string. Reads up to 1000 rows ascending, then (if needed) up to
+    1000 more descending, so a single query can return up to 2000 rows."""
+    collected = {}
+    total = None
+    for order in ("ticker", "-ticker"):
+        params = {"v": 111, "f": f_codes, "o": order}
+        offset = 1
+        while offset <= _MAX_RESULTS:
+            if first_html is not None and order == "ticker" and offset == 1:
+                html = first_html
+            else:
+                time.sleep(sleep_sec)
+                html = _get_page(session, {**params, "r": offset})
+            rows = _parse_rows(html)
+            if total is None:
+                total = _parse_total(html, rows)
+                if total and not rows:
+                    raise _LayoutError(f"Finviz reports {total} matches but no rows could be parsed")
+            if not rows:
+                break
+            new = 0
+            for r in rows:
+                if r["Ticker"] not in collected:
+                    collected[r["Ticker"]] = r
+                    new += 1
+            if len(collected) >= total or (order == "-ticker" and new == 0):
+                break
+            offset += len(rows)
+        if len(collected) >= (total or 0):
+            break
+    return list(collected.values()), (total or 0)
+
+
+def _fetch_screener_df_v2(my_filters):
+    """Scrape the redesigned Finviz screener directly. Returns a DataFrame (possibly empty
+    when Finviz says 0 matches), or None when the page layout isn't recognised."""
+    screener = Overview()                       # only used to turn the filter dict into URL codes
+    screener.set_filter(filters_dict=my_filters)
+    f_codes = screener.request_params.get("f", "")
+    sleep_sec = CONFIG.get("FINVIZ_PAGE_SLEEP_SEC", 0.3)
+
+    with requests.Session() as session:
+        html = _get_page(session, {"v": 111, "f": f_codes, "o": "ticker"})
+        rows = _parse_rows(html)
+        if not rows and not _TOTAL_RE.search(html):
+            print(f"  Finviz returned an unrecognised page ({len(html)} bytes) - layout changed or blocked.")
+            return None
+        total = _parse_total(html, rows)
+        print(f"  Finviz: {total} matches")
+        if total == 0:
+            return pd.DataFrame(columns=["Ticker", "Price"])
+
+        if total <= _MAX_RESULTS or "Sector" in my_filters:
+            all_rows, _ = _fetch_query(session, f_codes, sleep_sec, first_html=html)
+        else:
+            all_rows, seen = [], set()
+            for sec in _SECTORS:
+                part, part_total = _fetch_query(session, f"{f_codes},sec_{sec}" if f_codes else f"sec_{sec}", sleep_sec)
+                if len(part) < part_total:
+                    print(f"  WARNING: sector {sec}: got {len(part)} of {part_total}")
+                all_rows += [r for r in part if r["Ticker"] not in seen]
+                seen.update(r["Ticker"] for r in part)
+                print(f"  Finviz: {len(all_rows)}/{total} tickers (after {sec})")
+
+    if len(all_rows) < total:
+        print(f"  WARNING: Finviz reported {total} matches but only {len(all_rows)} were fetched "
+              f"(free accounts can page through at most {_MAX_RESULTS} results per query).")
+    return pd.DataFrame(all_rows)
+
+
 def _fetch_screener_df(my_filters):
     """Hit Finviz and return the screener DataFrame (or None/empty)."""
+    try:
+        df = _fetch_screener_df_v2(my_filters)
+        if df is not None:
+            return df
+    except Exception as e:
+        print(f"Finviz direct scrape failed ({type(e).__name__}: {e}); trying finvizfinance")
+
+    # Fallback: the finvizfinance library (only understands the old Finviz layout).
     screener = Overview()
     screener.set_filter(filters_dict=my_filters)
-
-    # finvizfinance waits `sleep_sec` between result pages (20 tickers/page).
-    # The default of 1s cost ~13s for ~250 tickers; 0.2s is usually fine. If
-    # Finviz rejects the fast fetch (rate limit), retry once at the old 1s pace.
-    fast_sleep = CONFIG.get("FINVIZ_PAGE_SLEEP_SEC", 0.2)
+    fast_sleep = CONFIG.get("FINVIZ_PAGE_SLEEP_SEC", 0.3)
     try:
         return screener.screener_view(sleep_sec=fast_sleep)
     except Exception as e:
