@@ -15,7 +15,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from screener.boxfilters import run_pipeline
 from common.intraday_strategy import * 
-from screener.pre_market import prefetch_pre_market, get_best_pre_market_price
+from screener.pre_market import prefetch_extended_hours, extended_hours_for_ticker, SESSION_LABELS
 from common.profiling import profile_step
 from common import disk_cache
 from common.cached_ticker import CachedTicker
@@ -45,31 +45,49 @@ yf_session.mount('http://', adapter)
 
 
 
-# Sentinel: pre-market prices are being fetched in the background and will be
-# filled into the rows after the worker pool finishes (see evaluate_tickers_parallel).
+# Sentinel: extended-hours prices (after-hours / overnight / pre-market) are being
+# fetched in the background and will be filled into the rows after the worker pool
+# finishes (see evaluate_tickers_parallel).
 PREMARKET_DEFERRED = object()
-_D1_CLOSE_KEY = "__d1_close"   # temporary row key used to compute Pre-Market%; removed before output
 # Temporary row key marking where the intraday columns go when a ticker's
 # intraday analysis is deferred until the background download finishes.
 # Holds the ticker's sector; replaced by the intraday columns before output.
 _INTRADAY_KEY = "__intraday_deferred"
 
 
-def _premarket_columns(pinfo, d1_close):
-    """Build the pre-market columns from a pre_market.py details dict.
+def _ext_hours_columns(ext):
+    """Build the extended-hours columns from an extended_hours_for_ticker() dict.
+    The session is picked automatically, as in enrich_html_v2: the most recent of
+    pre-market (PM) / overnight (ON) / after-hours (AH) that has a price. While
+    regular hours are open, today's (finished) pre-market is shown instead.
+    Ext% is vs the last completed regular-session close.
     Returns (columns_dict, latest_price_or_None)."""
-    cols = {"Pre-Market": "N/A", "Pre-Market%": "N/A", "Pre-Mkt Src": "N/A",
-            "Pre-Mkt Time": "N/A", "Pre-Mkt Reason": "N/A"}
-    latest_price = None
-    if pinfo:
-        cols["Pre-Mkt Reason"] = pinfo.get("reason") or "N/A"   # why that feed was chosen
-        if pinfo.get("price") is not None:
-            latest_price = float(pinfo["price"])
-            cols["Pre-Market"] = f"{latest_price:.2f} "
-            if d1_close:
-                cols["Pre-Market%"] = f"{(latest_price - d1_close) / d1_close * 100:.1f} "
-            cols["Pre-Mkt Src"] = (pinfo.get("source") or "N/A").upper()  # SIP (~16 min delayed) or IEX (live)
-            cols["Pre-Mkt Time"] = pinfo.get("time") or "N/A"             # HH:MM ET of the chosen 1-min bar
+    cols = {"Ext Session": "N/A", "Ext Price": "N/A", "Ext%": "N/A", "Ext Src": "N/A",
+            "Ext Time": "N/A", "Ext Reason": "N/A"}
+    if not ext:
+        return cols, None
+    sessions = ext.get("sessions") or {}
+    key = (ext.get("current") or {}).get("session")
+    if key is None and ext.get("market_open") and (sessions.get("pm") or {}).get("price") is not None:
+        key = "pm"
+    if key is None:
+        # nothing to show: say why, from the most recent session that has started
+        for k in ("pm", "on", "ah"):
+            st = (sessions.get(k) or {}).get("status")
+            if st and st != "not started yet":
+                cols["Ext Reason"] = f"{SESSION_LABELS[k]}: {st}"
+                break
+        return cols, None
+    d = sessions[key]
+    latest_price = float(d["price"])
+    cols["Ext Session"] = SESSION_LABELS[key]                       # AH / ON / PM
+    cols["Ext Price"] = f"{latest_price:.2f} "
+    if d.get("pct") is not None:
+        cols["Ext%"] = f"{d['pct']:.1f} "
+    cols["Ext Src"] = (d.get("source") or "N/A").upper()           # SIP (~16 min delayed), IEX (live), BOATS
+    t = d.get("time")
+    cols["Ext Time"] = (f"{d['day']} {t}" if d.get("day") and t else t) or "N/A"   # ET of the chosen 1-min bar
+    cols["Ext Reason"] = d.get("reason") or "N/A"                  # why that feed was chosen
     return cols, latest_price
 
 
@@ -160,17 +178,15 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
             vol_block["DAvgVol "] = f"{avg_vol:.0f} "
 
             risingVol = (days[DAYm1_IDX]['Volume'] > days[DAYm2_IDX]['Volume']) and (days[DAYm2_IDX]['Volume'] > days[DAYm3_IDX]['Volume'])
-            d1_close = float(days[DAYm1_IDX]['Close'])
-            pm_cols, latest_price = _premarket_columns(None, d1_close)   # all "N/A" placeholders
+            pm_cols, latest_price = _ext_hours_columns(None)   # all "N/A" placeholders
 
             if CONFIG["SHOW_PREMARKET_PRICE"] == 1 and premarket_prices is not PREMARKET_DEFERRED:
                 try:
-                    if premarket_prices is not None:
-                        pinfo = premarket_prices.get(symbol)                      # batched lookup
-                    else:
-                        pinfo = get_best_pre_market_price(                        # single-ticker fallback
-                            symbol, CONFIG.get("ALPACA_HEADERS"), with_details=True)
-                    pm_cols, latest_price = _premarket_columns(pinfo, d1_close)
+                    batch = premarket_prices
+                    if batch is None:                                          # single-ticker fallback
+                        batch = prefetch_extended_hours([symbol], CONFIG, df)
+                    ext = extended_hours_for_ticker(batch, symbol, df, CONFIG)
+                    pm_cols, latest_price = _ext_hours_columns(ext)
                 except Exception:
                     latest_price = None
 
@@ -477,10 +493,9 @@ def evaluate_tickers(sp500_tickers, data, verbose_errors=True, finbert_pipeline=
                     "ATR(14) ": f"{daily_atr_val:.2f} ",
                     "Sug. Stop ": f"{structural_stop:.2f} ",
                     "Take Profit ": f"{take_profit_target:.2f} ",
-                    # Pre-Market, Pre-Market%, Pre-Mkt Src, Pre-Mkt Time, Pre-Mkt Reason
+                    # Ext Session (AH/ON/PM), Ext Price, Ext%, Ext Src, Ext Time, Ext Reason
                     # (placeholders in deferred mode; filled in after the pool finishes)
                     **(pm_cols if CONFIG["SHOW_PREMARKET_PRICE"] == 1 else {}),
-                    **({_D1_CLOSE_KEY: d1_close} if premarket_prices is PREMARKET_DEFERRED else {}),
                     "50SMA ": f"{days[DAYm1_IDX]['SMA50']:.2f} ",
                     **sr_block,
                     **vol_block,
@@ -538,9 +553,10 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
                               **kwargs):
     results = []
 
-    # --- Pre-market prices (pre_market.py) ---
-    # Batched 1-min bars for today's pre-market on SIP (16-min delayed) and IEX
-    # (live). This only talks to Alpaca, so it runs in a BACKGROUND thread at
+    # --- Extended-hours prices (pre_market.py) ---
+    # Batched 1-min bars for the after-hours, overnight and pre-market windows that
+    # matter right now (SIP 16-min delayed vs live IEX; overnight from Blue Ocean
+    # "boats"). This only talks to Alpaca, so it runs in a BACKGROUND thread at
     # the same time as the intraday prefetch and the worker pool (which talk to
     # Yahoo), and its columns are filled into the rows afterwards.
     # Exception: FILTER_PREMARKET_GAP_UP needs the price while building rows,
@@ -549,11 +565,13 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
     premarket_future = None
     premarket_bg = None
     if CONFIG["SHOW_PREMARKET_PRICE"] == 1:
+        # the dates in the daily bars decide which regular session last closed
+        ref_index = data.dropna(how="all").index
         if CONFIG["FILTER_PREMARKET_GAP_UP"] == 1:
-            premarket_prices = _fetch_premarket(sp500_tickers)
+            premarket_prices = _fetch_ext_hours(sp500_tickers, ref_index)
         else:
             premarket_bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="premarket")
-            premarket_future = premarket_bg.submit(_fetch_premarket, sp500_tickers)
+            premarket_future = premarket_bg.submit(_fetch_ext_hours, sp500_tickers, ref_index)
             premarket_prices = PREMARKET_DEFERRED
 
     # --- Intraday 5m bars (intraday_strategy.py) ---
@@ -591,21 +609,24 @@ def evaluate_tickers_parallel(sp500_tickers, data, max_workers=10,
         with profile_step("main: save caches"):
             disk_cache.flush_all()   # save earnings / cash-flow / info / analyst caches for the next run
 
-    # Fill in the pre-market columns now that the background fetch is done.
+    # Fill in the extended-hours columns now that the background fetch is done.
     if premarket_future is not None:
         try:
-            with profile_step("main: wait for pre-market"):   # ~0 if it finished during the pool
-                prices = premarket_future.result()
+            with profile_step("main: wait for extended hours"):   # ~0 if it finished during the pool
+                batch = premarket_future.result()
         except Exception as e:
-            print(f"Pre-market fetch failed: {e}")
-            prices = {}
+            print(f"Extended-hours fetch failed: {e}")
+            batch = None
         finally:
             premarket_bg.shutdown(wait=False)
         for row in results:
-           d1_close = row.pop(_D1_CLOSE_KEY, None)
-           sym = row.get(" Ticker ", "").strip('",')   # '"AAPL",' -> 'AAPL'
-           cols, _ = _premarket_columns(prices.get(sym), d1_close)
-           row.update(cols)   # existing keys -> column order is unchanged
+            sym = row.get(" Ticker ", "").strip('",')   # '"AAPL",' -> 'AAPL'
+            try:
+                ext = extended_hours_for_ticker(batch, sym, data.xs(sym, level=1, axis=1).dropna(), CONFIG)
+            except Exception:
+                ext = None
+            cols, _ = _ext_hours_columns(ext)
+            row.update(cols)   # existing keys -> column order is unchanged
 
     return results
 
@@ -668,14 +689,19 @@ def _finish_deferred_intraday(results, data, intraday_future, max_workers) -> No
                 row[key] = value
 
 
-def _fetch_premarket(tickers) -> dict:
-    """Batched pre-market prices for all tickers; {} if disabled or failed."""
-    prices = prefetch_pre_market(list(tickers), CONFIG)
-    if prices is None:
-        return {}   # disabled in config: don't fall back to per-ticker calls
-    n = sum(1 for d in prices.values() if d and d.get("price") is not None)
-    print(f"Pre-market prices: {n}/{len(tickers)} tickers")
-    return prices
+def _fetch_ext_hours(tickers, ref_index) -> dict:
+    """Batched after-hours / overnight / pre-market prices for all tickers
+    (pre_market.prefetch_extended_hours); {} if disabled or no Alpaca keys, so
+    evaluate_tickers doesn't fall back to per-ticker calls."""
+    batch = prefetch_extended_hours(list(tickers), CONFIG, ref_index)
+    if not batch:
+        return {}
+    cal = batch["calendar"]
+    counts = {k: sum(1 for d in batch["by_ticker"].values() if (d.get(k) or {}).get("price") is not None)
+              for k in ("ah", "on", "pm")}
+    print(f"Extended hours (vs the {cal['close_date']} close, market {'OPEN' if cal['market_open'] else 'closed'}): "
+          + " | ".join(f"{SESSION_LABELS[k]} {counts[k]}/{len(tickers)}" for k in ("ah", "on", "pm")))
+    return batch
 
 
 def _run_pool(sp500_tickers, process_one, max_workers, verbose_errors, show_progress, results):
